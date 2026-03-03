@@ -1,0 +1,319 @@
+---
+title: "Docker Deployment"
+description: "Deploy GitHub Webhook Server using Docker or Podman"
+---
+
+## Using Pre-built Container (Recommended)
+
+The GitHub Webhook Server is available as a pre-built container image from GitHub Container Registry.
+
+### Pull the Image
+
+```bash
+# Using Podman (recommended)
+podman pull ghcr.io/myk-org/github-webhook-server:latest
+
+# Using Docker
+docker pull ghcr.io/myk-org/github-webhook-server:latest
+```
+
+## Docker Compose Setup
+
+The recommended way to run the webhook server is using Docker Compose. Here's the complete configuration from `examples/docker-compose.yaml`:
+
+```yaml
+services:
+  github-webhook-server:
+    container_name: github-webhook-server
+    image: ghcr.io/myk-org/github-webhook-server:latest
+    volumes:
+      - "./webhook_server_data_dir:/home/podman/data:Z" # Should include config.yaml and webhook-server.private-key.pem
+      # Mount temporary directories to prevent boot ID mismatch issues
+      - "/tmp/podman-storage-${USER:-1000}:/tmp/storage-run-1000"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Jerusalem
+      - MAX_WORKERS=50 # Defaults to 10 if not set
+      - WEBHOOK_SERVER_IP_BIND=0.0.0.0 # IP to listen
+      - WEBHOOK_SERVER_PORT=5000 # Port to listen
+      - WEBHOOK_SECRET=<secret> # If set verify hook is a valid hook from Github
+      - VERIFY_GITHUB_IPS=1 # Verify hook request is from GitHub IPs
+      - VERIFY_CLOUDFLARE_IPS=1 # Verify hook request is from Cloudflare IPs
+      - ENABLE_LOG_SERVER=true # Enable log viewer endpoints (default: false)
+      - ENABLE_MCP_SERVER=false # Enable MCP server for AI agent integration (default: false)
+      # AI CLI API keys for pr-test-oracle integration
+      # - ANTHROPIC_API_KEY=sk-ant-xxx       # Claude Code
+      # - GEMINI_API_KEY=xxx                  # Gemini CLI
+      # - CURSOR_API_KEY=xxx                  # Cursor Agent (API key method)
+      # For Cursor interactive login: docker exec -it github-webhook-server agent
+    ports:
+      - "5000:5000"
+    privileged: true
+    restart: unless-stopped
+```
+
+### Starting the Service
+
+```bash
+# Start the service
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop the service
+docker-compose down
+```
+
+## Volume Mounts
+
+### Required Volume
+
+The data directory must contain:
+
+- `config.yaml` - Server configuration (see [Configuration](/configuration))
+- `webhook-server.private-key.pem` - GitHub App private key
+
+```yaml
+volumes:
+  - "./webhook_server_data_dir:/home/podman/data:Z"
+```
+
+<Note>
+The `:Z` suffix is required for SELinux systems to properly label the volume.
+</Note>
+
+### Temporary Storage Volume
+
+Prevents boot ID mismatch issues when running Podman-in-Podman:
+
+```yaml
+volumes:
+  - "/tmp/podman-storage-${USER:-1000}:/tmp/storage-run-1000"
+```
+
+## Environment Variables
+
+### Server Configuration
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `WEBHOOK_SERVER_DATA_DIR` | Directory containing config.yaml | `/home/podman/data` | Yes |
+| `WEBHOOK_SERVER_IP_BIND` | IP address to bind server | `0.0.0.0` | No |
+| `WEBHOOK_SERVER_PORT` | Port to bind server | `5000` | No |
+| `MAX_WORKERS` | Maximum number of workers | `10` | No |
+
+### Security Settings
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `WEBHOOK_SECRET` | GitHub webhook secret for HMAC verification | - | Recommended |
+| `VERIFY_GITHUB_IPS` | Verify webhook requests from GitHub IPs | `false` | No |
+| `VERIFY_CLOUDFLARE_IPS` | Verify webhook requests from Cloudflare IPs | `false` | No |
+
+### Feature Toggles
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `ENABLE_LOG_SERVER` | Enable log viewer web interface | `false` | No |
+| `ENABLE_MCP_SERVER` | Enable MCP server for AI agents | `false` | No |
+
+### AI Integration (Optional)
+
+For [pr-test-oracle](https://github.com/myk-org/pr-test-oracle) integration:
+
+| Variable | Description | Tool |
+|----------|-------------|------|
+| `ANTHROPIC_API_KEY` | API key for Claude Code CLI | Claude |
+| `GEMINI_API_KEY` | API key for Gemini CLI | Gemini |
+| `CURSOR_API_KEY` | API key for Cursor Agent CLI | Cursor |
+
+<Note>
+For Cursor interactive login: `docker exec -it github-webhook-server agent`
+</Note>
+
+## Health Check Configuration
+
+The container includes a built-in health check:
+
+```dockerfile
+HEALTHCHECK CMD curl --fail http://127.0.0.1:5000/webhook_server/healthcheck || exit 1
+```
+
+For Docker Compose, you can configure advanced health checks:
+
+```yaml
+healthcheck:
+  test:
+    [
+      "CMD",
+      "curl",
+      "--fail",
+      "http://localhost:5000/webhook_server/healthcheck",
+    ]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 40s
+```
+
+## Building from Source
+
+If you need to build a custom image:
+
+```bash
+# Clone the repository
+git clone https://github.com/myakove/github-webhook-server.git
+cd github-webhook-server
+
+# Build with Podman
+podman build --format docker -t github-webhook-server .
+
+# Or with Docker
+docker build -t github-webhook-server .
+```
+
+### Dockerfile Overview
+
+The official Dockerfile is based on `quay.io/podman/stable:v5` and includes:
+
+**Base System:**
+- Fedora-based Podman stable image
+- Python 3.10, 3.11, 3.12, 3.13
+- Node.js and npm for AI CLI tools
+- Git, GCC, Cargo, and build tools
+
+**Python Environment:**
+- UV package manager for fast dependency installation
+- Pre-commit, Poetry, Prek, and Tox tools
+
+**AI CLI Tools:**
+- Claude Code CLI (`~/.local/bin`)
+- Cursor Agent CLI (`~/.local/bin`)
+- Gemini CLI (npm global)
+
+**Additional Tools:**
+- ROSA CLI for OpenShift
+- Regctl for container registry operations
+- Hub for GitHub CLI operations
+
+**Application Setup:**
+```dockerfile
+EXPOSE 5000
+
+ENV USERNAME="podman"
+ENV HOME_DIR="/home/$USERNAME"
+ENV DATA_DIR="$HOME_DIR/data"
+ENV APP_DIR="$HOME_DIR/github-webhook-server"
+
+WORKDIR $APP_DIR
+
+ENTRYPOINT ["tini", "--", "uv", "run", "entrypoint.py"]
+```
+
+## Running with Podman
+
+```bash
+podman run -d \
+  --name github-webhook-server \
+  -p 5000:5000 \
+  -v ./data:/home/podman/data:Z \
+  -e WEBHOOK_SECRET=your-secret \
+  -e VERIFY_GITHUB_IPS=1 \
+  -e ENABLE_LOG_SERVER=true \
+  ghcr.io/myk-org/github-webhook-server:latest
+```
+
+## Running with Docker
+
+```bash
+docker run -d \
+  --name github-webhook-server \
+  -p 5000:5000 \
+  -v ./data:/home/podman/data:Z \
+  -e WEBHOOK_SECRET=your-secret \
+  -e VERIFY_GITHUB_IPS=1 \
+  -e ENABLE_LOG_SERVER=true \
+  ghcr.io/myk-org/github-webhook-server:latest
+```
+
+## Privileged Mode
+
+<Warning>
+The container requires `privileged: true` for container building features (build-and-push-container).
+</Warning>
+
+If you don't need container building capabilities, you can run without privileged mode:
+
+```yaml
+privileged: false  # Disable if container building is not needed
+```
+
+## Container Logs
+
+View container logs:
+
+```bash
+# Docker Compose
+docker-compose logs -f github-webhook-server
+
+# Docker
+docker logs -f github-webhook-server
+
+# Podman
+podman logs -f github-webhook-server
+```
+
+## Troubleshooting
+
+### Permission Issues
+
+If you encounter permission issues with volumes:
+
+```bash
+# Check volume ownership
+ls -la ./webhook_server_data_dir
+
+# Fix ownership (1000:1000 is the podman user in the container)
+chown -R 1000:1000 ./webhook_server_data_dir
+```
+
+### Health Check Failures
+
+If the health check fails:
+
+```bash
+# Check if the server is running
+curl http://localhost:5000/webhook_server/healthcheck
+
+# Check container logs
+docker logs github-webhook-server
+```
+
+### SELinux Issues
+
+On SELinux-enabled systems, ensure volume labels are correct:
+
+```bash
+# Add :Z to volume mounts in docker-compose.yaml
+volumes:
+  - "./webhook_server_data_dir:/home/podman/data:Z"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Configure your webhook server
+  </Card>
+  <Card title="Kubernetes" icon="dharmachakra" href="/deployment/kubernetes">
+    Deploy to Kubernetes
+  </Card>
+  <Card title="Examples" icon="code" href="/deployment/examples">
+    View deployment examples
+  </Card>
+  <Card title="Security" icon="shield" href="/security/overview">
+    Security best practices
+  </Card>
+</CardGroup>

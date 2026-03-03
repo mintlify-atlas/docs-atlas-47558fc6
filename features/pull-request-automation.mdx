@@ -1,0 +1,355 @@
+---
+title: Pull Request Automation
+description: Automated PR workflows including reviewer assignment, labeling, and merge management
+---
+
+The GitHub Webhook Server provides comprehensive pull request automation that streamlines code review workflows and repository management.
+
+## Automated Reviewer Assignment
+
+The server intelligently assigns reviewers based on OWNERS files in your repository, ensuring the right people review code changes.
+
+### How It Works
+
+- Automatically assigns reviewers when PRs are opened or synchronized
+- Uses OWNERS files at repository root and in subdirectories
+- Supports both approvers and reviewers with different permission levels
+- Respects `root-approvers` flag for component-specific ownership
+
+### OWNERS File Format
+
+**Root OWNERS File:**
+
+```yaml
+approvers:
+  - senior-dev1
+  - senior-dev2
+  - team-lead
+reviewers:
+  - developer1
+  - developer2
+  - developer3
+```
+
+**Directory-specific OWNERS:**
+
+```yaml
+# Component-specific OWNERS (e.g., backend/OWNERS)
+root-approvers: false # Don't require root approvers for this component
+approvers:
+  - backend-lead
+  - senior-backend-dev
+reviewers:
+  - backend-dev1
+  - backend-dev2
+```
+
+### Manual Reviewer Assignment
+
+Users can trigger reviewer assignment via comment commands:
+
+```bash
+# Assign reviewers based on OWNERS files
+/assign-reviewers
+
+# Assign specific reviewer
+/assign-reviewer @username
+```
+
+## Label Management
+
+The webhook server automatically applies and manages labels to track PR status and categorization.
+
+### Automatic Labels
+
+The following labels are automatically applied based on PR state:
+
+| Label Category | Labels | Description |
+|----------------|--------|-------------|
+| **Status** | `verified`, `hold`, `wip` | Manual workflow control |
+| **Merge State** | `needs-rebase`, `has-conflicts`, `can-be-merged` | Merge readiness |
+| **Size** | `size/XS`, `size/S`, `size/M`, `size/L`, `size/XL`, `size/XXL` | PR size based on lines changed |
+| **Branch** | `branch/<name>` | Target branch tracking |
+| **Cherry-pick** | `cherry-pick/<branch>`, `cherry-picked` | Cherry-pick tracking |
+| **Auto-merge** | `automerge` | Auto-merge enabled |
+| **Review Status** | `approved-*`, `lgtm-*`, `changes-requested-*`, `commented-*` | Review tracking |
+
+### WIP Detection
+
+PRs with titles starting with "WIP", "[WIP]", or "Draft:" automatically receive the `wip` label:
+
+- Applied on PR open, reopen, or title edit
+- Removed when title no longer indicates work in progress
+- Blocks PR from being merged when present
+
+### Configurable Labels
+
+You can control which labels are enabled and customize their colors:
+
+```yaml
+labels:
+  enabled-labels:
+    - verified
+    - hold
+    - wip
+    - needs-rebase
+    - has-conflicts
+    - can-be-merged
+    - size
+    - branch
+    - cherry-pick
+    - automerge
+  colors:
+    hold: red
+    verified: green
+    wip: orange
+    can-be-merged: limegreen
+```
+
+**Note:** Review labels (`approved-*`, `lgtm-*`, etc.) are always enabled and cannot be disabled as they are the source of truth for the approval system.
+
+## PR Size Labels
+
+The server calculates PR size based on total lines changed (additions + deletions) and applies size labels automatically.
+
+### Default Size Thresholds
+
+| Label | Lines Changed | Color |
+|-------|---------------|-------|
+| `size/XS` | 0-19 | Light gray |
+| `size/S` | 20-49 | Green |
+| `size/M` | 50-99 | Orange |
+| `size/L` | 100-299 | Red |
+| `size/XL` | 300-499 | Dark red |
+| `size/XXL` | 500+ | Darkest red |
+
+### Custom Size Configuration
+
+Define custom size categories with your own names, thresholds, and colors:
+
+**Global Configuration:**
+
+```yaml
+pr-size-thresholds:
+  Tiny:
+    threshold: 10
+    color: lightgray
+  Small:
+    threshold: 50
+    color: green
+  Medium:
+    threshold: 150
+    color: orange
+  Large:
+    threshold: 300
+    color: red
+  Massive:
+    threshold: inf  # Unbounded - captures all PRs >= 300 lines
+    color: darkred
+```
+
+**Repository-specific Override:**
+
+```yaml
+repositories:
+  my-project:
+    pr-size-thresholds:
+      Express:
+        threshold: 25
+        color: lightblue
+      Standard:
+        threshold: 100
+        color: green
+      Premium:
+        threshold: 500
+        color: orange
+      Ultimate:
+        threshold: inf
+        color: crimson
+```
+
+**Configuration Rules:**
+
+- **threshold**: Positive integer or `inf` for unbounded largest category
+- **color**: Any CSS3 color name (e.g., `red`, `lightblue`, `darkgreen`)
+- **Label Names**: Any string up to 49 characters
+- **Hierarchy**: Repository-level overrides global configuration
+- **Real-time**: Changes take effect immediately without server restart
+
+## Merge Readiness Validation
+
+The server performs comprehensive checks to determine if a PR is ready to merge.
+
+### Merge Requirements
+
+1. **Not a draft PR**
+2. **No `hold` label**
+3. **No `wip` label**
+4. **No merge conflicts** (no `has-conflicts` label)
+5. **Up to date with base branch** (no `needs-rebase` label)
+6. **All required checks passed**
+7. **Minimum approvals met** (configurable via `minimum-lgtm`)
+8. **Required labels present** (if configured via `can-be-merged-required-labels`)
+9. **Conventional title format** (if configured via `conventional-title`)
+
+### Can-Be-Merged Check
+
+The server creates a "can-be-merged" check run that validates all requirements:
+
+```yaml
+# Check merge readiness via command
+/check-can-merge
+```
+
+When all requirements are met, the `can-be-merged` label is automatically applied.
+
+### Auto-merge Configuration
+
+Enable auto-merge for specific branches:
+
+```yaml
+repositories:
+  my-project:
+    set-auto-merge-prs:
+      - main
+      - develop
+```
+
+When enabled:
+- PRs to configured branches receive the `automerge` label
+- PRs automatically merge when the "can-be-merged" check passes
+- Uses squash merge method by default
+
+### Auto-verified Users
+
+Bypass manual verification for trusted bot accounts:
+
+```yaml
+# Global configuration
+auto-verified-and-merged-users:
+  - "renovate[bot]"
+  - "dependabot[bot]"
+
+# Repository-specific override
+repositories:
+  my-project:
+    auto-verified-and-merged-users:
+      - "trusted-bot[bot]"
+```
+
+## Cherry-pick Automation
+
+Automatically create cherry-pick PRs to backport changes to other branches.
+
+### Cherry-pick Commands
+
+```bash
+# Cherry-pick to single branch
+/cherry-pick develop
+
+# Cherry-pick to multiple branches
+/cherry-pick v1.0 v2.0 v3.0
+```
+
+### Cherry-pick Workflow
+
+1. Original PR must be merged first
+2. Server creates new PR for each target branch
+3. New PRs are labeled with `cherry-pick/<target-branch>`
+4. Original PR receives `cherry-picked` label
+5. Cherry-pick PRs are auto-verified (configurable)
+
+### Auto-verification Configuration
+
+```yaml
+# Global setting (default: true)
+auto-verify-cherry-picked-prs: true
+
+# Disable auto-verification for specific repository
+repositories:
+  my-project:
+    auto-verify-cherry-picked-prs: false  # Require manual verification
+```
+
+### Cherry-pick Assignment
+
+By default, cherry-pick PRs are assigned to the original PR author:
+
+```yaml
+# Global setting (default: true)
+cherry-pick-assign-to-pr-author: true
+```
+
+## Conventional Commits
+
+Enforce Conventional Commits v1.0.0 specification for PR titles.
+
+### Configuration
+
+```yaml
+repositories:
+  my-project:
+    conventional-title: "feat,fix,docs,refactor,test"
+```
+
+**Options:**
+- Comma-separated list of allowed types
+- Use `"*"` to accept any type while enforcing format
+- Leave unconfigured to disable validation
+
+### Valid PR Title Examples
+
+```
+feat: add user authentication
+fix(parser): handle edge case in XML parsing
+feat!: breaking API change to authentication
+docs: update README with new examples
+refactor(api): simplify error handling
+```
+
+### Standard Types
+
+- `feat`: New features (MINOR version bump)
+- `fix`: Bug fixes (PATCH version bump)
+- `build`, `chore`, `ci`, `docs`, `style`, `refactor`, `perf`, `test`, `revert`
+
+**Resources:** [Conventional Commits Specification](https://www.conventionalcommits.org/en/v1.0.0/)
+
+## PR Tracking Issues
+
+Automatically create tracking issues for new pull requests.
+
+### Configuration
+
+```yaml
+# Global default
+create-issue-for-new-pr: true
+
+# Repository-specific override
+repositories:
+  my-project:
+    create-issue-for-new-pr: false  # Disable for this repo
+```
+
+When enabled:
+- Issue created when PR is opened
+- Issue title matches PR title
+- Issue body contains link to PR
+- Issue automatically closed when PR is merged or closed
+
+## Welcome Messages
+
+Automatic welcome comments posted to new PRs with helpful information:
+
+- Available commands
+- Review process explanation
+- CI/CD status checks
+- Link to tracking issue (if enabled)
+
+### Regenerate Welcome Message
+
+```bash
+/regenerate-welcome
+```
+
+This command recreates the welcome message with updated information.

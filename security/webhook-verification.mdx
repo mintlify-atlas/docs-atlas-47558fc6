@@ -1,0 +1,482 @@
+---
+title: Webhook Verification
+description: IP allowlisting and HMAC signature verification for GitHub webhooks
+---
+
+The GitHub Webhook Server provides two complementary verification mechanisms to ensure webhook authenticity: IP allowlisting and HMAC-SHA256 signature verification.
+
+## Overview
+
+Webhook verification protects against:
+- **Unauthorized webhook deliveries** from non-GitHub sources
+- **Replay attacks** using intercepted webhook payloads
+- **Man-in-the-middle attacks** attempting to inject malicious data
+- **DDoS attacks** from spoofed webhook sources
+
+## IP Allowlist Verification
+
+Restrict webhook processing to requests originating from trusted IP ranges.
+
+### GitHub IP Ranges
+
+Enable GitHub IP verification:
+
+```yaml
+# config.yaml
+verify-github-ips: true
+```
+
+Or via environment variable:
+
+```bash
+# docker-compose.yaml
+environment:
+  - VERIFY_GITHUB_IPS=1  # or "true"
+```
+
+**Verified IP ranges:**
+
+The server automatically validates against GitHub's current IP ranges:
+- `192.30.252.0/22` - GitHub.com webhooks
+- `185.199.108.0/22` - GitHub Pages and Actions
+- `140.82.112.0/20` - GitHub Services
+- `143.55.64.0/20` - GitHub Enterprise Cloud
+
+**IP ranges are fetched dynamically** from GitHub's API to ensure accuracy.
+
+### Cloudflare IP Ranges
+
+If your webhook server sits behind Cloudflare:
+
+```yaml
+# config.yaml
+verify-cloudflare-ips: true
+verify-github-ips: false  # Disable GitHub IP check when using Cloudflare
+```
+
+Or via environment variable:
+
+```bash
+environment:
+  - VERIFY_CLOUDFLARE_IPS=1
+```
+
+**When to use Cloudflare verification:**
+- Webhook server deployed behind Cloudflare proxy
+- Using Cloudflare Tunnel (cloudflared)
+- Cloudflare DDoS protection enabled
+
+<Warning>
+  When using Cloudflare, **disable GitHub IP verification** (`verify-github-ips: false`) because all requests will originate from Cloudflare IP ranges, not GitHub IPs.
+</Warning>
+
+### Combined IP Verification
+
+**Incorrect configuration (both enabled):**
+
+```yaml
+# ❌ WRONG - Don't enable both simultaneously
+verify-github-ips: true
+verify-cloudflare-ips: true
+```
+
+This will **reject all webhooks** because requests cannot originate from both GitHub and Cloudflare IPs simultaneously.
+
+**Correct configurations:**
+
+```yaml
+# ✅ Direct GitHub webhooks (no proxy)
+verify-github-ips: true
+verify-cloudflare-ips: false
+```
+
+```yaml
+# ✅ Cloudflare proxy in front of webhook server
+verify-github-ips: false
+verify-cloudflare-ips: true
+```
+
+### IP Verification Logging
+
+Monitor IP verification in logs:
+
+```bash
+# Successful verification
+grep "IP verified" webhook-server.log
+
+# Failed verification attempts
+grep "IP not in allowlist" webhook-server.log
+
+# Show rejected IP addresses
+grep "Unauthorized IP" webhook-server.log | awk '{print $NF}'
+```
+
+### Testing IP Verification
+
+Test from allowed IP:
+
+```bash
+# From GitHub IP range (will succeed)
+curl -X POST http://your-server:5000/webhook_server \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: ping" \
+  -d '{"zen": "test"}'
+```
+
+Test from blocked IP:
+
+```bash
+# From non-GitHub IP (will be rejected)
+curl -X POST http://your-server:5000/webhook_server \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: ping" \
+  -d '{"zen": "test"}'
+# Response: {"detail": "Unauthorized IP address"}
+```
+
+## HMAC-SHA256 Signature Verification
+
+GitHub signs all webhook payloads using HMAC-SHA256 to verify authenticity.
+
+### Configure Webhook Secret
+
+**In configuration file:**
+
+```yaml
+# config.yaml
+webhook-secret: "your-secure-random-secret" # pragma: allowlist secret
+```
+
+**Via environment variable (recommended):**
+
+```bash
+# .env or docker-compose.yaml
+WEBHOOK_SECRET=your-secure-random-secret
+```
+
+**Generate strong webhook secret:**
+
+```bash
+# Linux/macOS - 32 random bytes in hex
+openssl rand -hex 32
+
+# Output example:
+a3f7c8e9d2b1f6a4e8c7d9f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1
+```
+
+### Configure in GitHub
+
+1. Navigate to repository settings: `Settings → Webhooks → Add webhook`
+2. Set **Payload URL**: `https://your-domain.com/webhook_server`
+3. Set **Content type**: `application/json`
+4. Set **Secret**: Enter the same secret from your configuration
+5. Select events or choose "Send me everything"
+6. Ensure **Active** is checked
+7. Click "Add webhook"
+
+### How Signature Verification Works
+
+**GitHub's signing process:**
+
+1. GitHub creates HMAC-SHA256 signature of payload using your secret
+2. Signature sent in `X-Hub-Signature-256` header: `sha256=<signature>`
+3. Webhook server receives payload and header
+
+**Server verification process:**
+
+1. Server extracts signature from `X-Hub-Signature-256` header
+2. Server computes HMAC-SHA256 of received payload using configured secret
+3. Server compares computed signature with GitHub's signature
+4. If signatures match, webhook is authentic
+
+**Example verification:**
+
+```python
+import hmac
+import hashlib
+
+def verify_signature(payload: bytes, signature_header: str, secret: str) -> bool:
+    # Extract signature from header
+    expected_signature = signature_header.replace('sha256=', '')
+    
+    # Compute HMAC-SHA256 signature
+    computed_signature = hmac.new(
+        key=secret.encode('utf-8'),
+        msg=payload,
+        digestmod=hashlib.sha256
+    ).hexdigest()
+    
+    # Constant-time comparison to prevent timing attacks
+    return hmac.compare_digest(computed_signature, expected_signature)
+```
+
+### Signature Verification Logging
+
+Monitor signature verification:
+
+```bash
+# Successful verification
+grep "Signature verified" webhook-server.log
+
+# Failed verification (incorrect secret)
+grep "signatures didn't match" webhook-server.log
+
+# Missing signature header
+grep "No signature provided" webhook-server.log
+```
+
+### Testing Signature Verification
+
+**Test webhook with valid signature:**
+
+```bash
+#!/bin/bash
+SECRET="your-webhook-secret"
+PAYLOAD='{"zen": "test webhook"}'
+SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/^.*= //')
+
+curl -X POST http://your-server:5000/webhook_server \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: ping" \
+  -H "X-Hub-Signature-256: sha256=$SIGNATURE" \
+  -d "$PAYLOAD"
+```
+
+**Test with invalid signature:**
+
+```bash
+curl -X POST http://your-server:5000/webhook_server \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: ping" \
+  -H "X-Hub-Signature-256: sha256=invalid_signature" \
+  -d '{"zen": "test"}'
+# Response: {"detail": "Invalid signature"}
+```
+
+## Configuration Examples
+
+### Production Configuration
+
+**Maximum security (recommended):**
+
+```yaml
+# config.yaml
+webhook-secret: "${WEBHOOK_SECRET}"  # From environment variable
+verify-github-ips: true
+verify-cloudflare-ips: false
+disable-ssl-warnings: true
+```
+
+```bash
+# docker-compose.yaml
+environment:
+  - WEBHOOK_SECRET=${WEBHOOK_SECRET}  # From .env file
+  - VERIFY_GITHUB_IPS=1
+```
+
+**With Cloudflare proxy:**
+
+```yaml
+# config.yaml
+webhook-secret: "${WEBHOOK_SECRET}"
+verify-github-ips: false  # Disabled - behind Cloudflare
+verify-cloudflare-ips: true
+```
+
+### Development Configuration
+
+**Testing without verification (NOT for production):**
+
+```yaml
+# config.yaml - development only
+verify-github-ips: false
+verify-cloudflare-ips: false
+# webhook-secret: ""  # Optional - disable signature verification
+```
+
+<Warning>
+  Never disable verification in production environments. This leaves your webhook server vulnerable to unauthorized access and malicious payloads.
+</Warning>
+
+### Testing with smee.io
+
+When using [smee.io](https://smee.io) for local development:
+
+```yaml
+# config.yaml
+webhook-ip: https://smee.io/your-channel
+webhook-secret: "your-test-secret"
+verify-github-ips: false  # smee.io proxies requests
+verify-cloudflare-ips: false
+```
+
+## Troubleshooting
+
+### Issue: Webhooks Rejected with "Unauthorized IP"
+
+**Symptom:**
+```
+ERROR: Unauthorized IP address: 203.0.113.42
+```
+
+**Solutions:**
+
+1. **Check if using proxy/CDN:**
+   ```yaml
+   # If behind Cloudflare
+   verify-cloudflare-ips: true
+   verify-github-ips: false
+   ```
+
+2. **Verify GitHub IP ranges:**
+   ```bash
+   # Fetch current GitHub IP ranges
+   curl https://api.github.com/meta | jq '.hooks'
+   ```
+
+3. **Check reverse proxy configuration:**
+   ```nginx
+   # Ensure X-Forwarded-For header is passed
+   proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+   ```
+
+### Issue: Signature Verification Fails
+
+**Symptom:**
+```
+ERROR: Webhook signatures didn't match
+```
+
+**Solutions:**
+
+1. **Verify secret matches GitHub configuration:**
+   - Check GitHub webhook settings
+   - Ensure no extra whitespace in secret
+   - Secret is case-sensitive
+
+2. **Check environment variable:**
+   ```bash
+   # Verify secret is loaded
+   docker exec github-webhook-server env | grep WEBHOOK_SECRET
+   ```
+
+3. **Verify payload not modified:**
+   - Reverse proxy must pass raw payload unchanged
+   - Disable request body buffering if necessary
+
+4. **Check webhook secret syntax:**
+   ```yaml
+   # ✅ CORRECT
+   webhook-secret: "my-secret-123"
+   
+   # ❌ WRONG - missing quotes
+   webhook-secret: my-secret-123
+   ```
+
+### Issue: All Webhooks Rejected (Both IPs Enabled)
+
+**Symptom:**
+```
+ERROR: IP verification failed
+```
+
+**Solution:**
+```yaml
+# ❌ WRONG - both enabled
+verify-github-ips: true
+verify-cloudflare-ips: true
+
+# ✅ CORRECT - choose one
+verify-github-ips: true
+verify-cloudflare-ips: false
+```
+
+### Issue: Missing Signature Header
+
+**Symptom:**
+```
+WARNING: No X-Hub-Signature-256 header found
+```
+
+**Solutions:**
+
+1. **Verify GitHub webhook configuration:**
+   - Ensure "Secret" field is configured in GitHub
+   - Re-save webhook configuration in GitHub
+
+2. **Check reverse proxy:**
+   ```nginx
+   # Ensure headers are passed
+   proxy_pass_request_headers on;
+   ```
+
+3. **Test with manual curl:**
+   ```bash
+   # Include signature header
+   curl -X POST http://localhost:5000/webhook_server \
+     -H "X-Hub-Signature-256: sha256=..." \
+     -d '{...}'
+   ```
+
+## Security Best Practices
+
+### 1. Always Enable Both Verifications
+
+For maximum security, enable both IP and signature verification:
+
+```yaml
+webhook-secret: "${WEBHOOK_SECRET}"  # HMAC signature
+verify-github-ips: true              # IP allowlist
+```
+
+### 2. Rotate Webhook Secrets Regularly
+
+Implement secret rotation schedule:
+
+1. Generate new webhook secret
+2. Update GitHub webhook configuration with new secret
+3. Update webhook server configuration
+4. Restart webhook server
+5. Verify webhook deliveries succeed
+
+### 3. Monitor Verification Failures
+
+Set up alerts for verification failures:
+
+```bash
+# Alert on signature verification failures
+grep "signatures didn't match" webhook-server.log | \
+  mail -s "Webhook Security Alert" admin@example.com
+```
+
+### 4. Use Environment Variables for Secrets
+
+Never commit secrets to version control:
+
+```yaml
+# config.yaml
+webhook-secret: "${WEBHOOK_SECRET}"  # ✅ From environment
+
+# ❌ NEVER do this:
+# webhook-secret: "hardcoded-secret-123"
+```
+
+### 5. Test Verification Before Production
+
+Always test webhook verification:
+
+1. Configure webhook in GitHub
+2. Trigger test webhook (Settings → Webhooks → Recent Deliveries → Redeliver)
+3. Verify successful delivery in logs
+4. Test with invalid signature to confirm rejection
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Security Overview" icon="shield" href="/security/overview">
+    Comprehensive security architecture and best practices
+  </Card>
+  <Card title="Log Viewer Security" icon="eye-slash" href="/security/log-viewer-security">
+    Secure the unauthenticated log viewer endpoints
+  </Card>
+</CardGroup>

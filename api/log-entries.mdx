@@ -1,0 +1,263 @@
+---
+title: 'GET /logs/api/entries'
+description: 'Retrieve historical log entries with filtering and pagination'
+---
+
+## Endpoint
+
+```http
+GET /logs/api/entries
+```
+
+Retrieves historical webhook log entries with memory-efficient streaming, filtering, and pagination.
+
+<Warning>
+**Security Warning**: This endpoint is NOT protected by authentication. Never expose it outside your trusted network. Deploy behind a reverse proxy with authentication, use firewall rules to restrict access, and never expose log viewer ports directly to the internet. Log files may contain GitHub tokens, user information, repository details, and sensitive webhook payloads.
+</Warning>
+
+## Query Parameters
+
+All query parameters are optional. Use them to filter and paginate results.
+
+<ParamField query="hook_id" type="string">
+  Filter by specific GitHub delivery ID (x-github-delivery header value)
+  
+  Example: `hook_id=abc123-def456`
+</ParamField>
+
+<ParamField query="pr_number" type="integer">
+  Filter by pull request number
+  
+  Example: `pr_number=123`
+</ParamField>
+
+<ParamField query="repository" type="string">
+  Filter by repository name in `owner/repo` format
+  
+  Example: `repository=my-org/my-repo`
+</ParamField>
+
+<ParamField query="event_type" type="string">
+  Filter by GitHub event type (e.g., `pull_request`, `check_run`, `push`)
+  
+  Example: `event_type=pull_request`
+</ParamField>
+
+<ParamField query="github_user" type="string">
+  Filter by GitHub username (api_user field)
+  
+  Example: `github_user=octocat`
+</ParamField>
+
+<ParamField query="level" type="string">
+  Filter by log level
+  
+  Allowed values: `DEBUG`, `INFO`, `WARNING`, `ERROR`
+  
+  Example: `level=ERROR`
+</ParamField>
+
+<ParamField query="start_time" type="string">
+  Start time filter in ISO 8601 format
+  
+  Example: `start_time=2025-01-30T10:00:00Z`
+</ParamField>
+
+<ParamField query="end_time" type="string">
+  End time filter in ISO 8601 format
+  
+  Example: `end_time=2025-01-30T12:00:00Z`
+</ParamField>
+
+<ParamField query="search" type="string">
+  Full-text search in log messages (case-insensitive)
+  
+  Example: `search=signature%20verification`
+</ParamField>
+
+<ParamField query="limit" type="integer" default="100">
+  Maximum number of entries to return (1-10,000)
+  
+  Example: `limit=50`
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0">
+  Pagination offset (number of entries to skip)
+  
+  Example: `offset=100`
+</ParamField>
+
+## Response
+
+<ResponseField name="entries" type="array">
+  Array of log entry objects matching the applied filters
+  
+  <Expandable title="Log Entry Object">
+    <ResponseField name="timestamp" type="string">
+      ISO 8601 timestamp (e.g., `2025-01-30T10:30:00.123000`)
+    </ResponseField>
+    
+    <ResponseField name="level" type="string">
+      Log level: `DEBUG`, `INFO`, `WARNING`, or `ERROR`
+    </ResponseField>
+    
+    <ResponseField name="logger_name" type="string">
+      Name of the logger component (e.g., `GithubWebhook`, `PullRequestHandler`)
+    </ResponseField>
+    
+    <ResponseField name="message" type="string">
+      Log message text
+    </ResponseField>
+    
+    <ResponseField name="hook_id" type="string" optional>
+      GitHub delivery ID (x-github-delivery)
+    </ResponseField>
+    
+    <ResponseField name="event_type" type="string" optional>
+      GitHub event type (e.g., `pull_request`, `check_run`)
+    </ResponseField>
+    
+    <ResponseField name="repository" type="string" optional>
+      Repository name in `owner/repo` format
+    </ResponseField>
+    
+    <ResponseField name="pr_number" type="integer" optional>
+      Pull request number
+    </ResponseField>
+    
+    <ResponseField name="github_user" type="string" optional>
+      GitHub username (api_user)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="entries_processed" type="integer | string">
+  Number of log entries examined during this request. May be an integer or string with "+" suffix (e.g., `"50000+"`) indicating the streaming process reached its maximum processing limit and more entries exist.
+</ResponseField>
+
+<ResponseField name="filtered_count_min" type="integer">
+  Minimum number of entries matching the current filters. Calculated as `len(entries) + offset`, representing the definitive lower bound of matching entries. Useful for pagination calculations and showing "showing X of at least Y results" messages.
+</ResponseField>
+
+<ResponseField name="total_log_count_estimate" type="string">
+  Statistical estimate of total log entries across all log files (including rotated logs). Provides context about overall dataset size for UI statistics and capacity planning. Based on sampling the first 10 log files to balance accuracy with performance.
+  
+  Examples: `"1.2M"`, `"45.3K"`, `"892"`
+</ResponseField>
+
+<ResponseField name="limit" type="integer">
+  Echo of the requested limit parameter
+</ResponseField>
+
+<ResponseField name="offset" type="integer">
+  Echo of the requested offset parameter
+</ResponseField>
+
+<ResponseField name="is_partial_scan" type="boolean">
+  Indicates whether the streaming process examined all available logs (`false`) or stopped at the processing limit (`true`)
+</ResponseField>
+
+## Examples
+
+### Get recent errors for a specific PR
+
+```bash
+curl "http://localhost:5000/logs/api/entries?pr_number=123&level=ERROR&limit=50"
+```
+
+<CodeGroup>
+```json Response
+{
+  "entries": [
+    {
+      "timestamp": "2025-01-30T10:30:00.123000",
+      "level": "ERROR",
+      "logger_name": "PullRequestHandler",
+      "message": "Failed to assign reviewers: API rate limit exceeded",
+      "hook_id": "abc123-def456",
+      "event_type": "pull_request",
+      "repository": "my-org/my-repo",
+      "pr_number": 123,
+      "github_user": "octocat"
+    }
+  ],
+  "entries_processed": 1500,
+  "filtered_count_min": 1,
+  "total_log_count_estimate": "45.3K",
+  "limit": 50,
+  "offset": 0,
+  "is_partial_scan": false
+}
+```
+</CodeGroup>
+
+### Search for specific text in logs
+
+```bash
+curl "http://localhost:5000/logs/api/entries?search=signature%20verification&limit=25"
+```
+
+### Filter by repository and time range
+
+```bash
+curl "http://localhost:5000/logs/api/entries?repository=my-org/my-repo&start_time=2025-01-30T00:00:00Z&end_time=2025-01-30T23:59:59Z&limit=100"
+```
+
+### Pagination example
+
+```bash
+# Get first page
+curl "http://localhost:5000/logs/api/entries?limit=100&offset=0"
+
+# Get second page
+curl "http://localhost:5000/logs/api/entries?limit=100&offset=100"
+
+# Get third page
+curl "http://localhost:5000/logs/api/entries?limit=100&offset=200"
+```
+
+### Track specific webhook delivery
+
+```bash
+curl "http://localhost:5000/logs/api/entries?hook_id=abc123-def456"
+```
+
+## Performance Notes
+
+- **Memory-efficient streaming**: Handles log files of any size with constant memory footprint
+- **Early filtering**: Applies filters during parsing to reduce memory usage
+- **Sub-second responses**: Optimized for fast queries even with large datasets
+- **Processing limits**: 
+  - Without filters: processes up to 20,000 entries
+  - With filters: processes up to 50,000 entries
+  - Maximum 25 most recent log files examined
+
+## Error Responses
+
+<ResponseField name="400 Bad Request" type="error">
+  Invalid parameters (e.g., limit out of range, negative offset)
+  
+  ```json
+  {
+    "detail": "Limit must be between 1 and 10000"
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="500 Internal Server Error" type="error">
+  File access errors or internal server errors
+  
+  ```json
+  {
+    "detail": "Error accessing log files"
+  }
+  ```
+</ResponseField>
+
+## Use Cases
+
+- **Debugging**: Find error logs for specific PRs or webhooks
+- **Monitoring**: Track webhook processing for repositories
+- **Analysis**: Search for specific events or patterns
+- **Auditing**: Review historical webhook activity
+- **Troubleshooting**: Investigate failures by filtering on error levels

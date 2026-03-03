@@ -1,0 +1,608 @@
+---
+title: 'OWNERS Files'
+description: 'OWNERS file format, approver/reviewer assignment, and directory-specific configuration'
+icon: 'users'
+---
+
+## Overview
+
+The **OWNERS file system** provides fine-grained control over code review assignments in your repository. OWNERS files define **approvers** (who can approve PRs) and **reviewers** (who review but don't approve) for specific directories and the entire repository.
+
+## OWNERS File Format
+
+### Root OWNERS File
+
+Place an `OWNERS` file at the repository root to define default approvers and reviewers:
+
+```yaml Repository Root: OWNERS
+# Repository-level approvers (can approve PRs)
+approvers:
+  - senior-dev1
+  - senior-dev2
+  - team-lead
+
+# Repository-level reviewers (review but don't approve)
+reviewers:
+  - developer1
+  - developer2
+  - developer3
+
+# Optional: Users allowed to run specific commands
+allowed-users:
+  - ci-bot
+  - automation-account
+```
+
+### Directory-Specific OWNERS Files
+
+Place OWNERS files in subdirectories to override repository-level settings:
+
+```yaml backend/OWNERS
+# Component-specific approvers
+approvers:
+  - backend-lead
+  - senior-backend-dev
+
+# Component-specific reviewers
+reviewers:
+  - backend-dev1
+  - backend-dev2
+
+# Don't require root approvers for backend changes
+root-approvers: false
+```
+
+```yaml frontend/OWNERS
+approvers:
+  - frontend-lead
+  - ux-engineer
+
+reviewers:
+  - frontend-dev1
+  - frontend-dev2
+  - designer
+
+# Require root approvers in addition to frontend approvers
+root-approvers: true
+```
+
+## Field Definitions
+
+### approvers
+
+<ParamField path="approvers" type="array<string>" required>
+  List of GitHub usernames who can **approve pull requests** for this directory or repository.
+  
+  - Approvals count toward `minimum-lgtm` requirement
+  - Automatically added as reviewers to PRs touching their files
+  - Can use `/approve` command on PRs
+  - Appears in PR comments as "Required Approvers"
+</ParamField>
+
+**Example:**
+
+```yaml
+approvers:
+  - alice
+  - bob
+  - charlie
+```
+
+### reviewers
+
+<ParamField path="reviewers" type="array<string>">
+  List of GitHub usernames who can **review pull requests** but cannot approve.
+  
+  - Can provide feedback and request changes
+  - Can use `/lgtm` command ("Looks Good To Me")
+  - Automatically assigned to PRs touching their files
+  - Appears in PR comments as "Reviewers"
+  - Reviews don't count toward approval requirements
+</ParamField>
+
+**Example:**
+
+```yaml
+reviewers:
+  - dev-team-member-1
+  - dev-team-member-2
+  - intern
+```
+
+### root-approvers
+
+<ParamField path="root-approvers" type="boolean" default="true">
+  Whether root approvers are required for PRs affecting this directory.
+  
+  - `true` (default): Root approvers **must** approve in addition to directory approvers
+  - `false`: Only directory approvers needed, root approvers not required
+  - Allows component teams to approve changes independently
+</ParamField>
+
+<CodeGroup>
+
+```yaml Require Root Approvers (default)
+root-approvers: true
+# PR needs: 1 directory approver + 1 root approver
+```
+
+```yaml Independent Component Approval
+root-approvers: false
+# PR needs: 1 directory approver only
+```
+
+</CodeGroup>
+
+### allowed-users
+
+<ParamField path="allowed-users" type="array<string>">
+  List of GitHub usernames with special permissions to run restricted commands.
+  
+  - Can use `/add-allowed-user` command to add users dynamically
+  - Typically used for bot accounts and automation
+  - Separate from reviewers/approvers
+</ParamField>
+
+**Example:**
+
+```yaml
+allowed-users:
+  - renovate[bot]
+  - dependabot[bot]
+  - ci-automation
+```
+
+## Reviewer Assignment Logic
+
+### How Reviewers are Assigned
+
+When a pull request is opened, the `OwnersFileHandler` (`webhook_server/libs/handlers/owners_files_handler.py`) automatically assigns reviewers:
+
+<Steps>
+  <Step title="Identify Changed Files">
+    List all files changed in the PR using `git diff` on the cloned repository:
+    ```python
+    changed_files = await self.list_changed_files(pull_request)
+    # ['backend/api.py', 'backend/models.py', 'frontend/App.tsx']
+    ```
+  </Step>
+
+  <Step title="Find Matching OWNERS Files">
+    For each changed file, traverse up the directory tree to find the nearest OWNERS file:
+    ```python
+    # backend/api.py → backend/OWNERS
+    # frontend/App.tsx → frontend/OWNERS
+    ```
+  </Step>
+
+  <Step title="Collect Approvers & Reviewers">
+    Aggregate all approvers and reviewers from matched OWNERS files:
+    ```python
+    approvers = ['backend-lead', 'senior-backend-dev', 'frontend-lead']
+    reviewers = ['backend-dev1', 'frontend-dev1', 'designer']
+    ```
+  </Step>
+
+  <Step title="Check root-approvers Requirement">
+    If any OWNERS file has `root-approvers: true` or doesn't specify it, include root approvers:
+    ```python
+    if any(owners_file.get('root-approvers', True) for owners_file in matched):
+        approvers += root_approvers
+    ```
+  </Step>
+
+  <Step title="Assign to PR">
+    Use GitHub API to assign reviewers (up to 15 max due to GitHub API limits):
+    ```python
+    await asyncio.to_thread(
+        pull_request.create_review_request,
+        reviewers=approvers + reviewers
+    )
+    ```
+  </Step>
+</Steps>
+
+### Assignment Example
+
+<Tabs>
+  <Tab title="Changed Files">
+    ```
+    backend/api.py
+    backend/models.py
+    frontend/App.tsx
+    docs/README.md
+    ```
+  </Tab>
+
+  <Tab title="OWNERS Files">
+    ```yaml backend/OWNERS
+    approvers:
+      - backend-lead
+      - senior-backend-dev
+    reviewers:
+      - backend-dev1
+      - backend-dev2
+    root-approvers: false
+    ```
+
+    ```yaml frontend/OWNERS
+    approvers:
+      - frontend-lead
+    reviewers:
+      - frontend-dev1
+      - designer
+    root-approvers: true
+    ```
+
+    ```yaml OWNERS (root)
+    approvers:
+      - cto
+      - tech-lead
+    reviewers:
+      - team-member
+    ```
+  </Tab>
+
+  <Tab title="Assigned Reviewers">
+    **Approvers:**
+    - `backend-lead` (backend/OWNERS)
+    - `senior-backend-dev` (backend/OWNERS)
+    - `frontend-lead` (frontend/OWNERS)
+    - `cto` (root OWNERS - required because frontend has root-approvers: true)
+    - `tech-lead` (root OWNERS)
+
+    **Reviewers:**
+    - `backend-dev1` (backend/OWNERS)
+    - `backend-dev2` (backend/OWNERS)
+    - `frontend-dev1` (frontend/OWNERS)
+    - `designer` (frontend/OWNERS)
+    - `team-member` (root OWNERS)
+
+    **Total:** 10 reviewers assigned (5 approvers + 5 reviewers)
+  </Tab>
+</Tabs>
+
+## Approval Requirements
+
+### Configuration
+
+Set minimum number of approvals required in `config.yaml`:
+
+```yaml
+repositories:
+  my-repository:
+    name: my-org/my-repository
+    minimum-lgtm: 2  # Require 2 approvals from approvers
+```
+
+### Approval Counting
+
+Approvals are tracked through review labels:
+
+- **Approver approval:** `approved-<username>` label (counts toward `minimum-lgtm`)
+- **Reviewer LGTM:** `lgtm-<username>` label (informational, doesn't count)
+- **Changes requested:** `changes-requested-<username>` label (blocks merge)
+
+**Example PR Labels:**
+
+```
+approved-backend-lead       ✅ Counts toward minimum-lgtm
+approved-frontend-lead      ✅ Counts toward minimum-lgtm
+lgtm-backend-dev1          ℹ️  Does not count (reviewer, not approver)
+changes-requested-cto      ❌ Blocks merge
+```
+
+### Merge Eligibility Check
+
+The `can-be-merged` check validates:
+
+<Checklist>
+  <Check>Minimum number of approvals from approvers (`minimum-lgtm`)</Check>
+  <Check>No outstanding change requests</Check>
+  <Check>All required status checks passed</Check>
+  <Check>No merge conflicts</Check>
+  <Check>Not marked as WIP or hold</Check>
+  <Check>Required labels present (if configured)</Check>
+</Checklist>
+
+## Advanced OWNERS Patterns
+
+### Component-Based Ownership
+
+```
+repository/
+├── OWNERS                    # CTO, tech leads
+├── backend/
+│   ├── OWNERS               # Backend team (root-approvers: false)
+│   ├── api/
+│   │   └── OWNERS           # API team (root-approvers: false)
+│   └── database/
+│       └── OWNERS           # DBA team (root-approvers: true)
+├── frontend/
+│   ├── OWNERS               # Frontend team (root-approvers: false)
+│   └── components/
+│       └── OWNERS           # Component library team
+└── docs/
+    └── OWNERS               # Tech writers (root-approvers: false)
+```
+
+**Benefits:**
+
+- 🎯 **Targeted reviews** - Only relevant teams notified
+- ⚡ **Faster approvals** - Independent component approval
+- 🔒 **Critical path protection** - Database changes require CTO approval
+- 📚 **Documentation ownership** - Tech writers own docs independently
+
+### Matrix Organization
+
+```yaml backend/OWNERS
+# Backend team owns all backend code
+approvers:
+  - backend-lead
+  - senior-backend-dev
+reviewers:
+  - backend-dev1
+  - backend-dev2
+root-approvers: false
+```
+
+```yaml backend/database/OWNERS
+# Database changes require DBA approval + root approval
+approvers:
+  - dba-lead
+  - senior-dba
+reviewers:
+  - junior-dba
+root-approvers: true  # Require CTO/tech lead approval for schema changes
+```
+
+### Open Source Project Pattern
+
+```yaml OWNERS
+# Maintainers can approve all PRs
+approvers:
+  - maintainer1
+  - maintainer2
+  - maintainer3
+
+# Contributors can review but not approve
+reviewers:
+  - contributor1
+  - contributor2
+  - contributor3
+  - contributor4
+  - contributor5
+```
+
+## Commands Related to OWNERS
+
+### Reviewer Assignment
+
+```bash
+# Manually trigger reviewer re-assignment
+/assign-reviewers
+```
+
+Use this when:
+- OWNERS files have been updated
+- Initial assignment was incorrect
+- Additional reviewers needed
+
+### Approval Commands
+
+```bash
+# Approver approval (counts toward minimum-lgtm)
+/approve
+
+# Reviewer LGTM (informational only)
+/lgtm
+```
+
+### Allowed Users
+
+```bash
+# Add user to allowed-users list dynamically
+/add-allowed-user @username
+```
+
+## Real-World Examples
+
+### Example 1: Microservices Repository
+
+```yaml OWNERS (root)
+approvers:
+  - platform-architect
+  - tech-lead
+reviewers:
+  - senior-engineer
+```
+
+```yaml services/auth/OWNERS
+approvers:
+  - auth-team-lead
+  - senior-auth-engineer
+reviewers:
+  - auth-engineer-1
+  - auth-engineer-2
+root-approvers: false
+```
+
+```yaml services/payment/OWNERS
+approvers:
+  - payment-team-lead
+  - payment-security-lead
+reviewers:
+  - payment-engineer
+root-approvers: true  # Require architect approval for payment changes
+```
+
+```yaml infrastructure/OWNERS
+approvers:
+  - devops-lead
+  - sre-lead
+reviewers:
+  - sre-engineer-1
+  - sre-engineer-2
+root-approvers: true  # Require architect approval for infrastructure
+```
+
+**PR touching `services/auth/api.py` and `services/payment/billing.py`:**
+
+- **Required approvers:**
+  - 1 from auth team (auth-team-lead OR senior-auth-engineer)
+  - 1 from payment team (payment-team-lead OR payment-security-lead)
+  - 1 from root (platform-architect OR tech-lead) - because payment has root-approvers: true
+
+### Example 2: Monorepo with Shared Libraries
+
+```yaml OWNERS (root)
+approvers:
+  - cto
+  - vp-engineering
+reviewers:
+  - staff-engineer
+```
+
+```yaml libs/shared/OWNERS
+approvers:
+  - platform-team-lead
+  - infrastructure-lead
+reviewers:
+  - platform-engineer
+root-approvers: true  # Shared libraries impact all teams
+```
+
+```yaml apps/web/OWNERS
+approvers:
+  - web-team-lead
+reviewers:
+  - web-dev-1
+  - web-dev-2
+root-approvers: false
+```
+
+```yaml apps/mobile/OWNERS
+approvers:
+  - mobile-team-lead
+  - ios-lead
+  - android-lead
+reviewers:
+  - ios-dev
+  - android-dev
+root-approvers: false
+```
+
+**PR touching `libs/shared/utils.ts` and `apps/web/App.tsx`:**
+
+- **Required approvers:**
+  - 1 from platform team (for shared library)
+  - 1 from web team (for web app)
+  - 1 from root (cto OR vp-engineering) - because shared lib has root-approvers: true
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Keep OWNERS Files Up to Date" icon="arrows-rotate">
+    - Review OWNERS files during onboarding/offboarding
+    - Update when team structure changes
+    - Archive inactive users
+    - Use team aliases where supported
+  </Accordion>
+
+  <Accordion title="Balance Autonomy and Oversight" icon="scale-balanced">
+    - Use `root-approvers: false` for independent teams
+    - Use `root-approvers: true` for critical paths (security, payments, infrastructure)
+    - Let component teams approve their own changes
+    - Require senior review for architectural changes
+  </Accordion>
+
+  <Accordion title="Document Ownership Clearly" icon="book">
+    - Add comments to OWNERS files explaining why certain approvers are required
+    - Document escalation paths for urgent approvals
+    - Link to team wikis or documentation
+  </Accordion>
+
+  <Accordion title="Avoid Review Bottlenecks" icon="traffic-light">
+    - Have multiple approvers per component (redundancy)
+    - Don't make root approvers required for everything
+    - Balance reviewer counts (3-5 per component)
+    - Consider time zones for global teams
+  </Accordion>
+
+  <Accordion title="Start Conservative, Relax Later" icon="shield">
+    - Begin with `root-approvers: true` for new components
+    - Relax to `false` once team proves ownership
+    - Add reviewers before removing approvers
+    - Test changes in staging/dev branches first
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+### No Reviewers Assigned
+
+**Problem:** PR opened but no reviewers assigned
+
+**Causes:**
+1. No OWNERS file in repository or parent directories
+2. OWNERS file has invalid YAML syntax
+3. Changed files outside any OWNERS coverage
+
+**Solution:**
+```bash
+# Create root OWNERS file
+cat > OWNERS << EOF
+approvers:
+  - your-username
+reviewers:
+  - team-member-1
+EOF
+
+# Manually trigger assignment
+# Comment on PR: /assign-reviewers
+```
+
+### Wrong Reviewers Assigned
+
+**Problem:** Incorrect reviewers assigned to PR
+
+**Solution:**
+```bash
+# Update OWNERS file
+# Push changes to repository
+# Re-trigger assignment: /assign-reviewers
+```
+
+### Too Many Approvals Required
+
+**Problem:** PR blocked waiting for too many approvals
+
+**Check configuration:**
+```yaml
+repositories:
+  my-repository:
+    minimum-lgtm: 2  # Reduce if too high
+```
+
+**Check OWNERS files:**
+```yaml
+# If too many root approvers required, set:
+root-approvers: false
+```
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="User Commands" icon="terminal" href="/features/user-commands">
+    `/approve`, `/lgtm`, `/assign-reviewers` commands
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    `minimum-lgtm` and approval settings
+  </Card>
+  <Card title="Webhook Events" icon="bolt" href="/concepts/webhook-events">
+    How OWNERS files trigger on PR events
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    OwnersFileHandler implementation details
+  </Card>
+</CardGroup>

@@ -1,0 +1,377 @@
+---
+title: Monitoring
+description: Monitor webhook server health, logs, and performance metrics
+---
+
+## Health Check Endpoint
+
+The webhook server provides a health check endpoint for monitoring uptime and availability.
+
+### Endpoint Usage
+
+```bash
+curl http://localhost:5000/webhook_server/healthcheck
+```
+
+**Response:**
+
+```json
+{
+  "status": 200,
+  "message": "Alive"
+}
+```
+
+### Integration with Container Orchestration
+
+**Docker Compose:**
+
+```yaml
+healthcheck:
+  test: ["CMD", "curl", "--fail", "http://localhost:5000/webhook_server/healthcheck"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 40s
+```
+
+**Kubernetes:**
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /webhook_server/healthcheck
+    port: 5000
+  initialDelaySeconds: 30
+  periodSeconds: 30
+readinessProbe:
+  httpGet:
+    path: /webhook_server/healthcheck
+    port: 5000
+  initialDelaySeconds: 5
+  periodSeconds: 10
+```
+
+## Log Monitoring
+
+### Standard Logging
+
+The webhook server uses structured logging with configurable log levels and destinations.
+
+**Log Levels:**
+
+- `DEBUG` - Detailed technical information for troubleshooting
+- `INFO` - General operational information
+- `WARNING` - Warning messages that need attention
+- `ERROR` - Error messages requiring investigation
+
+**Configuration:**
+
+```yaml
+# Global log configuration
+log-level: INFO
+log-file: webhook-server.log
+
+# Repository-specific logging
+repositories:
+  my-project:
+    name: my-org/my-project
+    log-level: DEBUG  # Override for specific repository
+    log-file: my-project.log
+```
+
+### Structured Webhook Logging
+
+All webhook processing is logged in JSON format for easy parsing and analysis.
+
+**Log Location:**
+
+```bash
+{WEBHOOK_SERVER_DATA_DIR}/logs/webhooks_YYYY-MM-DD.json
+```
+
+**Log Format:**
+
+```json
+{
+  "hook_id": "github-delivery-id",
+  "event_type": "pull_request",
+  "repository": "my-org/my-repo",
+  "action": "opened",
+  "sender": "username",
+  "pr": {
+    "number": 123,
+    "title": "Add new feature"
+  },
+  "timing": {
+    "started_at": "2026-03-03T10:30:00.123Z",
+    "completed_at": "2026-03-03T10:30:07.835Z",
+    "duration_ms": 7712
+  },
+  "workflow_steps": {
+    "clone_repository": {
+      "status": "completed",
+      "started_at": "2026-03-03T10:30:00.500Z",
+      "completed_at": "2026-03-03T10:30:05.323Z",
+      "duration_ms": 4823,
+      "branch": "main",
+      "commit_sha": "abc123def456"
+    },
+    "assign_reviewers": {
+      "status": "completed",
+      "duration_ms": 1200,
+      "reviewers_assigned": 2
+    }
+  },
+  "token_spend": 4,
+  "success": true
+}
+```
+
+**Failed Workflow Example:**
+
+```json
+{
+  "hook_id": "delivery-id-456",
+  "event_type": "pull_request",
+  "workflow_steps": {
+    "clone_repository": {
+      "status": "failed",
+      "duration_ms": 2100,
+      "error": {
+        "type": "GitCommandError",
+        "message": "Failed to clone repository: authentication failed",
+        "traceback": "..."
+      }
+    }
+  },
+  "success": false,
+  "error": {
+    "type": "GitCommandError",
+    "message": "Failed to clone repository: authentication failed"
+  }
+}
+```
+
+### Analyzing Logs with jq
+
+**Find Failed Webhooks:**
+
+```bash
+jq 'select(.success == false)' logs/webhooks_2026-03-03.json
+```
+
+**Calculate Average Processing Time:**
+
+```bash
+jq -s 'map(.timing.duration_ms) | add / length' logs/webhooks_2026-03-03.json
+```
+
+**Find Slow Webhooks (>5 seconds):**
+
+```bash
+jq 'select(.timing.duration_ms > 5000)' logs/webhooks_2026-03-03.json
+```
+
+**Count Webhooks by Event Type:**
+
+```bash
+jq -s 'group_by(.event_type) | map({event: .[0].event_type, count: length})' logs/webhooks_2026-03-03.json
+```
+
+## Web-Based Log Viewer
+
+<Warning>
+  **CRITICAL SECURITY NOTICE**: Log viewer endpoints are **NOT PROTECTED** by authentication. Deploy only on trusted networks (VPN, internal network). Never expose to the public internet. Logs contain sensitive data including GitHub tokens, webhook payloads, and user information.
+</Warning>
+
+### Enabling Log Viewer
+
+```bash
+# Enable via environment variable
+export ENABLE_LOG_SERVER=true
+
+# Access web interface
+http://your-server:5000/logs
+```
+
+### Key Features
+
+- **Real-time streaming** via WebSocket connections
+- **Advanced filtering** by hook ID, PR number, repository, user, log level
+- **PR flow visualization** showing processing stages and timing
+- **JSON export** for external analysis
+- **Memory-optimized** streaming architecture (90% memory reduction)
+- **Dark/light theme** support
+
+### API Endpoints
+
+**Get Historical Logs:**
+
+```bash
+curl "http://localhost:5000/logs/api/entries?pr_number=123&level=ERROR&limit=50"
+```
+
+**Export Logs:**
+
+```bash
+curl "http://localhost:5000/logs/api/export?format=json&pr_number=123" -o logs.json
+```
+
+**PR Flow Analysis:**
+
+```bash
+curl "http://localhost:5000/logs/api/pr-flow/123"
+```
+
+## Metrics and Performance
+
+### GitHub API Rate Limits
+
+Monitor GitHub API rate limit consumption to avoid throttling.
+
+**Token Spend Tracking:**
+
+Each webhook log entry includes `token_spend` field showing API calls made:
+
+```bash
+# Sum API calls for the day
+jq -s 'map(.token_spend // 0) | add' logs/webhooks_2026-03-03.json
+```
+
+**Rate Limit Information:**
+
+```python
+from webhook_server.libs.github_api import GithubWebhook
+
+# Check current rate limit
+api = github_webhook.unified_api
+rate_limit = await asyncio.to_thread(api.get_rate_limit)
+print(f"Remaining: {rate_limit.core.remaining}/{rate_limit.core.limit}")
+print(f"Reset at: {rate_limit.core.reset}")
+```
+
+### Processing Performance
+
+**Workflow Step Timing:**
+
+Each workflow step records duration for performance analysis:
+
+```bash
+# Find slowest clone operations
+jq -s 'map(.workflow_steps.clone_repository.duration_ms) | sort | reverse | .[0:10]' logs/webhooks_*.json
+```
+
+**Identify Bottlenecks:**
+
+```bash
+# Average time per workflow step
+jq -s '
+  map(.workflow_steps | to_entries[] | {step: .key, duration: .value.duration_ms}) |
+  group_by(.step) |
+  map({step: .[0].step, avg_ms: (map(.duration) | add / length)})
+' logs/webhooks_2026-03-03.json
+```
+
+### System Resource Monitoring
+
+**Container Monitoring (Docker/Podman):**
+
+```bash
+# Check container resource usage
+docker stats github-webhook-server
+
+# View container logs
+docker logs github-webhook-server --tail 100 --follow
+```
+
+**Process Monitoring:**
+
+```bash
+# CPU and memory usage
+ps aux | grep entrypoint.py
+
+# Open connections
+netstat -an | grep 5000
+```
+
+## Alert Recommendations
+
+### Critical Alerts
+
+**Health Check Failures:**
+
+```bash
+# Monitor health endpoint
+while true; do
+  status=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/webhook_server/healthcheck)
+  if [ "$status" != "200" ]; then
+    echo "ALERT: Health check failed with status $status"
+  fi
+  sleep 30
+done
+```
+
+**Webhook Processing Failures:**
+
+```bash
+# Alert on failed webhooks
+failed_count=$(jq -s 'map(select(.success == false)) | length' logs/webhooks_$(date +%Y-%m-%d).json)
+if [ "$failed_count" -gt 5 ]; then
+  echo "ALERT: $failed_count failed webhooks today"
+fi
+```
+
+**Rate Limit Exhaustion:**
+
+```python
+# Alert when rate limit drops below 10%
+remaining = rate_limit.core.remaining
+limit = rate_limit.core.limit
+if remaining < (limit * 0.1):
+    logger.warning(f"Rate limit critically low: {remaining}/{limit}")
+```
+
+### Warning Alerts
+
+**Slow Processing Times:**
+
+```bash
+# Alert on webhooks taking >10 seconds
+jq 'select(.timing.duration_ms > 10000)' logs/webhooks_$(date +%Y-%m-%d).json
+```
+
+**High API Token Consumption:**
+
+```bash
+# Alert on webhooks using >50 API calls
+jq 'select(.token_spend > 50)' logs/webhooks_$(date +%Y-%m-%d).json
+```
+
+**Configuration Errors:**
+
+```bash
+# Monitor for repository configuration errors
+grep -i "RepositoryNotFoundInConfigError" webhook-server.log
+```
+
+## Monitoring Best Practices
+
+1. **Enable log rotation** to prevent disk space exhaustion
+2. **Monitor rate limits** proactively using multiple GitHub tokens
+3. **Set up alerting** for health check failures and processing errors
+4. **Track performance trends** using structured webhook logs
+5. **Secure log viewer** access with reverse proxy authentication
+6. **Regular log analysis** to identify optimization opportunities
+7. **Archive old logs** to maintain system performance
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Troubleshooting" icon="wrench" href="/advanced/troubleshooting">
+    Debug common issues and resolve errors
+  </Card>
+  <Card title="Contributing" icon="code" href="/advanced/contributing">
+    Contribute to the webhook server development
+  </Card>
+</CardGroup>

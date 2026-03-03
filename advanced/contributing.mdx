@@ -1,0 +1,626 @@
+---
+title: Contributing
+description: Contribute to the GitHub Webhook Server development
+---
+
+## Development Setup
+
+### Prerequisites
+
+- **Python 3.13** (required)
+- **uv** package manager (recommended)
+- **Git** for version control
+- **GitHub account** for contributions
+
+### Clone Repository
+
+```bash
+git clone https://github.com/myk-org/github-webhook-server.git
+cd github-webhook-server
+```
+
+### Install Dependencies
+
+**Using uv (recommended):**
+
+```bash
+# Install all dependencies including dev and test groups
+uv sync
+
+# Activate virtual environment
+source .venv/bin/activate
+```
+
+**Using pip:**
+
+```bash
+# Install in development mode
+pip install -e .
+
+# Install development dependencies
+pip install -e ".[tests]"
+```
+
+### Run Development Server
+
+```bash
+# Set data directory
+export WEBHOOK_SERVER_DATA_DIR=./webhook_server_data
+
+# Create minimal config.yaml
+mkdir -p webhook_server_data
+cat > webhook_server_data/config.yaml << 'EOF'
+github-app-id: 123456
+webhook-ip: https://smee.io/your-channel
+github-tokens:
+  - ghp_your_github_token
+
+repositories:
+  test-repo:
+    name: your-org/test-repository
+    protected-branches:
+      main: []
+EOF
+
+# Run server
+uv run entrypoint.py
+```
+
+The server will start on `http://localhost:5000`.
+
+## Code Quality Requirements
+
+### Code Formatting (ruff)
+
+**Format code:**
+
+```bash
+uv run ruff format
+```
+
+**Check formatting:**
+
+```bash
+uv run ruff format --check
+```
+
+### Linting (ruff)
+
+**Run linter:**
+
+```bash
+uv run ruff check
+```
+
+**Auto-fix issues:**
+
+```bash
+uv run ruff check --fix
+```
+
+**Configuration:**
+
+```toml
+# pyproject.toml
+[tool.ruff]
+line-length = 120
+fix = true
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "PLC0415", "ARG", "RUF059"]
+```
+
+### Type Checking (mypy)
+
+**Run type checker:**
+
+```bash
+uv run mypy webhook_server/
+```
+
+**Requirements:**
+
+- **Strict mode enabled** - All type hints required
+- **No implicit optional** - Be explicit with `Type | None`
+- **Complete coverage** - All functions must have type hints
+
+**Configuration:**
+
+```toml
+# pyproject.toml
+[tool.mypy]
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_incomplete_defs = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+show_error_codes = true
+warn_unused_ignores = true
+strict_equality = true
+extra_checks = true
+```
+
+**Example:**
+
+```python
+# ✅ CORRECT - Complete type hints
+async def process_webhook(pr: PullRequest, reviewers: list[str]) -> None:
+    ...
+
+# ❌ WRONG - Missing type hints
+async def process_webhook(pr, reviewers):
+    ...
+```
+
+### Run All Quality Checks
+
+**Combined command:**
+
+```bash
+uv run ruff check && uv run ruff format && uv run mypy webhook_server/
+```
+
+## Testing
+
+### Test Coverage Requirement
+
+**Minimum coverage: 90%** (enforced by CI)
+
+**Run tests with coverage:**
+
+```bash
+# Run all tests with coverage report
+uv run --group tests pytest -n auto --cov=webhook_server
+
+# Generate HTML coverage report
+uv run --group tests pytest -n auto --cov=webhook_server --cov-report=html
+
+# Open coverage report
+open .tests_coverage/index.html
+```
+
+**Coverage configuration:**
+
+```toml
+# pyproject.toml
+[tool.coverage.run]
+omit = ["webhook_server/tests/*"]
+
+[tool.coverage.report]
+fail_under = 90
+skip_empty = true
+```
+
+### Running Tests
+
+**Run all tests:**
+
+```bash
+uv run --group tests pytest -n auto
+```
+
+**Run specific test file:**
+
+```bash
+uv run --group tests pytest webhook_server/tests/test_pull_request_handler.py -v
+```
+
+**Run specific test:**
+
+```bash
+uv run --group tests pytest webhook_server/tests/test_config.py::TestConfig::test_valid_config -v
+```
+
+**Run tests by marker:**
+
+```bash
+# Run only integration tests
+uv run --group tests pytest -m integration
+
+# Skip slow tests
+uv run --group tests pytest -m "not slow"
+```
+
+### Writing Tests
+
+**Test file structure:**
+
+```bash
+webhook_server/tests/
+├── test_*.py              # Unit and integration tests
+├── manifests/             # Test configuration files
+│   └── config.yaml
+├── e2e/                   # End-to-end tests
+│   └── test_pull_request_flow.py
+└── conftest.py            # Shared fixtures
+```
+
+**Example test:**
+
+```python
+import pytest
+from unittest.mock import AsyncMock, Mock, patch
+from webhook_server.libs.handlers.pull_request_handler import PullRequestHandler
+
+class TestPullRequestHandler:
+    @pytest.fixture
+    def mock_github_webhook(self):
+        """Create mock GithubWebhook instance."""
+        mock = Mock()
+        mock.repository_data = {
+            "collaborators": {"edges": []},
+            "labels": {"nodes": []}
+        }
+        mock.unified_api = AsyncMock()
+        return mock
+
+    @pytest.mark.asyncio
+    async def test_process_pull_request(self, mock_github_webhook):
+        """Test pull request processing."""
+        handler = PullRequestHandler(mock_github_webhook)
+        event_data = {
+            "action": "opened",
+            "pull_request": {
+                "number": 123,
+                "title": "Test PR"
+            }
+        }
+        
+        await handler.process_event(event_data)
+        
+        # Verify API calls
+        mock_github_webhook.unified_api.add_pr_labels.assert_called_once()
+```
+
+### Test Best Practices
+
+1. **Use fixtures** for common test setup
+2. **Mock external dependencies** (GitHub API, file system)
+3. **Test both success and failure paths**
+4. **Use `@pytest.mark.asyncio`** for async tests
+5. **Keep tests fast** - Use mocks instead of real API calls
+6. **Test edge cases** - Empty data, None values, exceptions
+
+## Pre-commit Hooks
+
+### Installation
+
+**Install pre-commit:**
+
+```bash
+pip install pre-commit
+
+# Install git hooks
+pre-commit install
+```
+
+### Hooks Configuration
+
+The repository uses these pre-commit hooks:
+
+- **ruff** - Code formatting and linting
+- **mypy** - Type checking
+- **flake8** - Additional linting
+- **detect-secrets** - Prevent committing secrets
+- **gitleaks** - Security scanning
+- **trailing-whitespace** - Remove trailing whitespace
+- **end-of-file-fixer** - Ensure files end with newline
+- **check-yaml** - Validate YAML files
+- **check-ast** - Validate Python syntax
+
+### Running Hooks Manually
+
+**Run on all files:**
+
+```bash
+pre-commit run --all-files
+```
+
+**Run specific hook:**
+
+```bash
+pre-commit run ruff --all-files
+pre-commit run mypy --all-files
+```
+
+**Update hooks:**
+
+```bash
+pre-commit autoupdate
+```
+
+## Development Workflow
+
+### Making Changes
+
+1. **Create feature branch:**
+
+   ```bash
+   git checkout -b feature/my-new-feature
+   ```
+
+2. **Make changes** following code style guidelines
+
+3. **Run quality checks:**
+
+   ```bash
+   # Format code
+   uv run ruff format
+   
+   # Fix linting issues
+   uv run ruff check --fix
+   
+   # Check types
+   uv run mypy webhook_server/
+   
+   # Run tests
+   uv run --group tests pytest -n auto --cov=webhook_server
+   ```
+
+4. **Commit changes:**
+
+   ```bash
+   git add .
+   git commit -m "feat: add new feature"
+   ```
+
+   Pre-commit hooks will run automatically.
+
+5. **Push to GitHub:**
+
+   ```bash
+   git push origin feature/my-new-feature
+   ```
+
+6. **Create Pull Request** on GitHub
+
+### Commit Message Guidelines
+
+**Format:**
+
+```
+type: description
+
+Optional body explaining the change
+
+Optional footer (breaking changes, issues)
+```
+
+**Types:**
+
+- `feat:` - New feature
+- `fix:` - Bug fix
+- `docs:` - Documentation changes
+- `refactor:` - Code refactoring
+- `test:` - Test additions or changes
+- `chore:` - Build/tooling changes
+- `perf:` - Performance improvements
+
+**Examples:**
+
+```bash
+feat: add support for custom PR size labels
+
+fix: resolve WebSocket connection timeout issue
+
+docs: update configuration examples
+
+refactor: optimize repository data fetching
+
+test: add tests for label handler
+```
+
+### Pull Request Checklist
+
+Before submitting a PR, ensure:
+
+- ✅ **Code formatted** with `ruff format`
+- ✅ **Linting passes** with `ruff check`
+- ✅ **Type checking passes** with `mypy`
+- ✅ **Tests pass** with 90%+ coverage
+- ✅ **Pre-commit hooks pass**
+- ✅ **Documentation updated** if needed
+- ✅ **Commit messages follow guidelines**
+- ✅ **No secrets committed**
+- ✅ **CHANGELOG updated** for user-facing changes
+
+## Architecture Guidelines
+
+### Code Organization
+
+```bash
+webhook_server/
+├── app.py                    # FastAPI application
+├── libs/
+│   ├── config.py            # Configuration management
+│   ├── github_api.py        # GitHub API wrapper
+│   ├── handlers/            # Event handlers
+│   │   ├── pull_request_handler.py
+│   │   ├── issue_comment_handler.py
+│   │   └── ...
+│   └── exceptions.py        # Custom exceptions
+├── utils/
+│   ├── helpers.py           # Utility functions
+│   ├── context.py           # Structured logging context
+│   └── constants.py         # Constants
+├── web/
+│   └── log_viewer.py        # Log viewer web interface
+└── tests/
+    ├── test_*.py            # Tests
+    └── manifests/           # Test data
+```
+
+### Handler Pattern
+
+**Create new handler:**
+
+```python
+from webhook_server.libs.github_api import GithubWebhook
+from webhook_server.utils.helpers import get_logger_with_params
+
+class MyHandler:
+    def __init__(self, github_webhook: GithubWebhook) -> None:
+        self.github_webhook = github_webhook
+        self.logger = get_logger_with_params(
+            name="MyHandler",
+            repository=github_webhook.repository,
+            hook_id=github_webhook.hook_id
+        )
+
+    async def process_event(self, event_data: dict) -> None:
+        """Process webhook event."""
+        self.logger.info(f"Processing event: {event_data['action']}")
+        
+        # Use unified API for GitHub operations
+        await self.github_webhook.unified_api.some_operation()
+```
+
+### Async/Await Requirements
+
+**CRITICAL:** PyGithub is synchronous - **MUST** wrap with `asyncio.to_thread()`
+
+```python
+import asyncio
+from github.PullRequest import PullRequest
+
+# ✅ CORRECT - Wrap PyGithub calls
+await asyncio.to_thread(pull_request.create_issue_comment, "Comment")
+is_draft = await asyncio.to_thread(lambda: pull_request.draft)
+
+# ❌ WRONG - Direct call blocks event loop
+pull_request.create_issue_comment("Comment")  # BLOCKS!
+```
+
+### Type Hints
+
+**Always include complete type hints:**
+
+```python
+from typing import Any
+from github.PullRequest import PullRequest
+
+# ✅ CORRECT
+async def assign_reviewers(
+    self,
+    pull_request: PullRequest,
+    reviewers: list[str]
+) -> None:
+    ...
+
+# ❌ WRONG - Missing type hints
+async def assign_reviewers(self, pull_request, reviewers):
+    ...
+```
+
+### Logging Pattern
+
+```python
+from webhook_server.utils.helpers import get_logger_with_params
+from webhook_server.utils.context import get_context
+
+# Create logger with context
+logger = get_logger_with_params(
+    name="ComponentName",
+    repository="org/repo",
+    hook_id="delivery-id"
+)
+
+# Log messages
+logger.debug("Detailed technical information")
+logger.info("General information")
+logger.warning("Warning that needs attention")
+logger.error("Error requiring investigation")
+
+# Use logger.exception for errors with traceback
+try:
+    await some_operation()
+except Exception:
+    logger.exception("Operation failed")  # Includes traceback
+```
+
+### Error Handling
+
+```python
+from webhook_server.libs.exceptions import RepositoryNotFoundInConfigError
+
+# ✅ CORRECT - Specific exceptions
+try:
+    config.get_repository("org/repo")
+except RepositoryNotFoundInConfigError:
+    logger.error("Repository not in config")
+    return
+
+# ✅ CORRECT - Use logger.exception for unexpected errors
+except Exception:
+    logger.exception("Unexpected error processing webhook")
+    raise
+```
+
+## Documentation
+
+### Docstring Format
+
+**Use Google-style docstrings:**
+
+```python
+def process_webhook(
+    hook_id: str,
+    event_type: str,
+    payload: dict[str, Any]
+) -> None:
+    """Process incoming GitHub webhook.
+
+    Args:
+        hook_id: GitHub delivery ID for tracking
+        event_type: GitHub event type (pull_request, push, etc.)
+        payload: Webhook payload data
+
+    Raises:
+        RepositoryNotFoundInConfigError: If repository not in config
+        ValueError: If payload is invalid
+
+    Example:
+        >>> process_webhook("abc-123", "pull_request", {...})
+    """
+    ...
+```
+
+### README and Examples
+
+- Update **README.md** for user-facing features
+- Add examples to **examples/** directory
+- Update configuration schema documentation
+- Include real-world use cases
+
+## Release Process
+
+1. **Update version** in `pyproject.toml`
+2. **Update CHANGELOG.md** with changes
+3. **Create git tag:**
+
+   ```bash
+   git tag -a v4.1.0 -m "Release v4.1.0"
+   git push origin v4.1.0
+   ```
+
+4. **GitHub Actions** will automatically:
+   - Run tests
+   - Build container image
+   - Push to GitHub Container Registry
+
+## Getting Help
+
+- **Documentation:** [README.md](https://github.com/myk-org/github-webhook-server#readme)
+- **Issues:** [GitHub Issues](https://github.com/myk-org/github-webhook-server/issues)
+- **Development Guide:** [CLAUDE.md](https://github.com/myk-org/github-webhook-server/blob/main/CLAUDE.md)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Monitoring" icon="chart-line" href="/advanced/monitoring">
+    Set up monitoring and alerts
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/advanced/troubleshooting">
+    Debug common issues
+  </Card>
+</CardGroup>

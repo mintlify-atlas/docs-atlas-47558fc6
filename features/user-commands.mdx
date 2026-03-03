@@ -1,0 +1,491 @@
+---
+title: User Commands
+description: Interactive PR management through comment-based commands
+---
+
+Users can interact with pull requests through comment commands on GitHub. These commands provide manual control over automated workflows and testing.
+
+## Overview
+
+Commands are triggered by posting comments on pull requests containing specific command strings starting with `/`.
+
+**Example:**
+```
+/verified
+/retest all
+/cherry-pick develop
+```
+
+## PR Status Management
+
+Control the workflow status of pull requests.
+
+### Verified
+
+Mark a PR as verified (code review passed).
+
+```bash
+/verified
+```
+
+**Behavior:**
+- Adds `verified` label to PR
+- Required for merge unless user is in `auto-verified-and-merged-users`
+- Can be canceled with `/verified cancel`
+
+**Cancel Verification:**
+```bash
+/verified cancel
+```
+
+**Permissions:** Any authenticated user can verify
+
+### Hold
+
+Block a PR from being merged.
+
+```bash
+/hold
+```
+
+**Behavior:**
+- Adds `hold` label to PR
+- Prevents merge even if all other requirements are met
+- Useful for PRs that need discussion or coordination
+
+**Remove Hold:**
+```bash
+/hold cancel
+```
+
+**Permissions:** Any authenticated user
+
+### Work in Progress (WIP)
+
+Mark a PR as work in progress.
+
+```bash
+/wip
+```
+
+**Behavior:**
+- Adds `wip` label to PR
+- Prevents merge
+- Automatically detected from PR title ("WIP", "[WIP]", "Draft:")
+
+**Remove WIP:**
+```bash
+/wip cancel
+```
+
+**Permissions:** Any authenticated user
+
+## Review and Approval Commands
+
+### LGTM (Looks Good To Me)
+
+Approve changes as a reviewer.
+
+```bash
+/lgtm
+```
+
+**Behavior:**
+- Adds `lgtm-<username>` label
+- Counts toward minimum required approvals
+- Does not grant final approval for merge (use `/approve` for that)
+
+**Permissions:** Any authenticated user
+
+### Approve
+
+Grant final approval for a PR.
+
+```bash
+/approve
+```
+
+**Behavior:**
+- Adds `approved-<username>` label
+- Grants merge approval
+- Triggers test-oracle analysis (if configured with `approved` trigger)
+- Required for merge unless auto-verified user
+
+**Permissions:** Repository OWNERS (approvers)
+
+### Assign Reviewers
+
+Assign reviewers based on OWNERS files.
+
+```bash
+/assign-reviewers
+```
+
+**Behavior:**
+- Analyzes changed files
+- Finds relevant OWNERS files
+- Assigns appropriate reviewers and approvers
+- Respects component-specific ownership rules
+
+**Assign Specific Reviewer:**
+```bash
+/assign-reviewer @username
+```
+
+**Permissions:** Any authenticated user
+
+### Auto-merge
+
+Enable automatic merging when all requirements are met.
+
+```bash
+/automerge
+```
+
+**Behavior:**
+- Adds `automerge` label
+- PR automatically merges when "can-be-merged" check passes
+- Uses squash merge method
+- Only works for branches configured in `set-auto-merge-prs`
+
+**Permissions:** Repository maintainers and approvers
+
+### Check Merge Readiness
+
+Manually check if PR meets all merge requirements.
+
+```bash
+/check-can-merge
+```
+
+**Behavior:**
+- Validates all merge requirements
+- Reports detailed status of each requirement
+- Updates `can-be-merged` check run
+- Applies or removes `can-be-merged` label
+
+**Permissions:** Any authenticated user
+
+## Testing Commands
+
+Trigger various tests and validation checks.
+
+### Retest
+
+Run specific tests or all configured tests.
+
+**Run All Tests:**
+```bash
+/retest all
+```
+
+**Run Tox Tests:**
+```bash
+/retest tox
+```
+
+**Run Pre-commit Checks:**
+```bash
+/retest pre-commit
+```
+
+**Rebuild Container:**
+```bash
+/retest build-container
+```
+
+**Test Python Package Installation:**
+```bash
+/retest python-module-install
+```
+
+**Permissions:** Repository OWNERS
+
+### Build and Push Container
+
+Manually trigger container build and push to registry.
+
+**Basic Build:**
+```bash
+/build-and-push-container
+```
+
+**Build with Custom Arguments:**
+```bash
+/build-and-push-container --build-arg VERSION=2.0
+/build-and-push-container --build-arg ENV=production --build-arg DEBUG=false
+```
+
+**Permissions:** Repository OWNERS
+
+## Workflow Management
+
+### Reprocess PR
+
+Trigger complete PR workflow reprocessing from scratch.
+
+```bash
+/reprocess
+```
+
+**Behavior:**
+- Re-runs entire PR workflow
+- Reassigns reviewers based on current OWNERS file
+- Updates all labels based on current state
+- Re-queues all CI/CD checks
+- Respects current repository configuration
+- Won't create duplicate welcome messages or tracking issues
+
+**Use Cases:**
+- Webhook delivery failed or was missed
+- Processing interrupted mid-workflow
+- OWNERS file changed and reviewers need reassignment
+- Configuration changed and checks need re-evaluation
+- PR in inconsistent state and needs full reset
+
+**Permissions:** Repository OWNERS (same as `/retest`)
+
+### Regenerate Welcome Message
+
+Regenerate the welcome comment on a PR.
+
+```bash
+/regenerate-welcome
+```
+
+**Behavior:**
+- Deletes old welcome message (if found)
+- Creates new welcome message with current information
+- Updates command list and status checks
+
+**Permissions:** Any authenticated user
+
+## Cherry-pick Commands
+
+Create cherry-pick PRs to backport changes to other branches.
+
+### Single Branch
+
+```bash
+/cherry-pick develop
+```
+
+### Multiple Branches
+
+```bash
+/cherry-pick v1.0 v2.0 v3.0
+```
+
+**Behavior:**
+- Creates new PR for each target branch
+- New PRs labeled with `cherry-pick/<target-branch>`
+- Original PR receives `cherry-picked` label
+- Cherry-pick PRs auto-verified by default (configurable)
+- Assigned to original PR author (configurable)
+
+**Configuration:**
+
+```yaml
+# Auto-verify cherry-picked PRs (default: true)
+auto-verify-cherry-picked-prs: true
+
+# Assign to original author (default: true)
+cherry-pick-assign-to-pr-author: true
+```
+
+**Requirements:**
+- Original PR must be merged
+- User must have write access to repository
+- Target branches must exist
+
+**Permissions:** Any authenticated user with write access
+
+## AI-Powered Commands
+
+### Test Oracle
+
+Request AI-powered test recommendations based on PR changes.
+
+```bash
+/test-oracle
+```
+
+**Behavior:**
+- Analyzes PR diff using AI (Claude, Gemini, or Cursor)
+- Identifies affected code areas
+- Recommends specific tests to run
+- Posts review comment with recommendations
+- Links to relevant test files
+
+**Configuration:**
+
+```yaml
+test-oracle:
+  server-url: "http://localhost:8000"
+  ai-provider: "claude"  # claude | gemini | cursor
+  ai-model: "claude-opus-4-6[1m]"
+  test-patterns:
+    - "tests/**/*.py"
+  triggers:
+    - approved  # Also auto-trigger on /approve command
+```
+
+**Requirements:**
+- PR Test Oracle server running and accessible
+- AI provider API key configured (ANTHROPIC_API_KEY, GEMINI_API_KEY, or CURSOR_API_KEY)
+- Valid test-oracle configuration
+
+**Permissions:** Any authenticated user
+
+**See:** [PR Test Oracle](https://github.com/myk-org/pr-test-oracle)
+
+## Label Commands
+
+Add or remove custom labels.
+
+### Add Label
+
+```bash
+/<label-name>
+```
+
+**Examples:**
+```bash
+/bug
+/documentation
+/enhancement
+/good-first-issue
+```
+
+### Remove Label
+
+```bash
+/<label-name> cancel
+```
+
+**Examples:**
+```bash
+/bug cancel
+/documentation cancel
+```
+
+**Permissions:** Any authenticated user
+
+## Draft PR Restrictions
+
+By default, most commands are blocked on draft PRs to prevent accidental operations.
+
+### Allow Commands on Draft PRs
+
+```yaml
+# Allow all commands on draft PRs
+allow-commands-on-draft-prs: []
+
+# Allow specific commands on draft PRs
+allow-commands-on-draft-prs:
+  - build-and-push-container
+  - retest
+```
+
+**Default Behavior:**
+- Commands blocked on draft PRs unless explicitly allowed
+- User receives notification that command is blocked
+- Convert PR to ready for review to enable commands
+
+## Command Reactions
+
+The webhook server reacts to comment commands to provide immediate feedback:
+
+- **👀** - Command recognized and processing
+- **✅** - Command completed successfully
+- **❌** - Command failed or not permitted
+- **🚫** - Command blocked (e.g., draft PR restriction)
+
+## Permission Model
+
+Commands have different permission requirements:
+
+### Any Authenticated User
+- `/verified`, `/hold`, `/wip`, `/lgtm`
+- `/assign-reviewers`, `/check-can-merge`
+- `/<label-name>` (custom labels)
+- `/regenerate-welcome`
+- `/test-oracle`
+
+### Repository OWNERS
+- `/approve`
+- `/retest` (all variants)
+- `/build-and-push-container`
+- `/reprocess`
+
+### Maintainers/Approvers
+- `/automerge`
+- `/add-allowed-user` (special admin command)
+
+### Write Access Required
+- `/cherry-pick`
+
+## Command Processing
+
+### Parallel Execution
+
+Multiple commands in a single comment are processed in parallel:
+
+```bash
+/verified
+/assign-reviewers
+/retest all
+```
+
+All three commands execute concurrently for faster processing.
+
+### Error Handling
+
+- Invalid commands are logged but don't fail other commands
+- Permission errors are reported to user
+- GitHub API errors are retried automatically
+- Command failures are logged for debugging
+
+## Common Use Cases
+
+### Quick PR Approval Flow
+
+```bash
+# Review code, then approve
+/lgtm
+/approve
+```
+
+### Backport Fix to Multiple Releases
+
+```bash
+# After PR is merged
+/cherry-pick release-1.0 release-2.0 release-3.0
+```
+
+### Debug Failed Tests
+
+```bash
+# Rerun specific test
+/retest pre-commit
+
+# Or rerun everything
+/retest all
+```
+
+### Block PR Temporarily
+
+```bash
+# Block merge while investigating
+/hold
+
+# Later, unblock
+/hold cancel
+```
+
+### Emergency Container Rebuild
+
+```bash
+# Rebuild with updated base image
+/build-and-push-container --build-arg BASE_IMAGE=alpine:3.19
+```

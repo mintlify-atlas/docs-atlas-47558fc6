@@ -1,0 +1,594 @@
+---
+title: 'Configuration Validation'
+description: 'JSON Schema validation, IDE support, and configuration testing'
+icon: 'shield-check'
+---
+
+## Overview
+
+The GitHub Webhook Server includes **comprehensive configuration validation** using JSON Schema to ensure your configuration files are correct before deployment. This prevents runtime errors and provides IDE autocompletion for faster configuration.
+
+## Schema Validation System
+
+### Schema Location
+
+The configuration schema is defined in:
+
+```
+webhook_server/config/schema.yaml
+```
+
+**Public URL for IDE support:**
+
+```
+https://raw.githubusercontent.com/myk-org/github-webhook-server/refs/heads/main/webhook_server/config/schema.yaml
+```
+
+### What Gets Validated
+
+<AccordionGroup>
+  <Accordion title="Required Fields" icon="asterisk">
+    - `github-app-id` - GitHub App ID
+    - `webhook-ip` - Webhook URL with full path
+    - `github-tokens` - At least one GitHub token
+    - `repositories` - Repository configurations
+    - Repository `name` - Full repository name (org/repo)
+  </Accordion>
+
+  <Accordion title="Type Checking" icon="code">
+    - **Strings:** `log-level`, `log-file`, `webhook-secret`
+    - **Integers:** `github-app-id`, `port`, `max-workers`, `minimum-lgtm`
+    - **Booleans:** `verify-github-ips`, `pre-commit`, `verified-job`
+    - **Arrays:** `github-tokens`, `protected-branches`, `enabled-labels`
+    - **Objects:** `docker`, `pypi`, `container`, `tox`, `labels`
+  </Accordion>
+
+  <Accordion title="Enum Validation" icon="list-check">
+    - **log-level:** `INFO`, `DEBUG`
+    - **ai-provider:** `claude`, `gemini`, `cursor`
+    - **conventional-title:** `true`, `false`, `fix`
+    - **Label categories:** `verified`, `hold`, `wip`, `needs-rebase`, `has-conflicts`, `can-be-merged`, `size`, `branch`, `cherry-pick`, `automerge`
+  </Accordion>
+
+  <Accordion title="Structural Validation" icon="sitemap">
+    - Repository configurations nested correctly
+    - PR size thresholds properly formatted
+    - Protected branch rules structure
+    - Test oracle configuration
+    - AI features configuration
+    - Container build arguments
+  </Accordion>
+
+  <Accordion title="Cross-Field Validation" icon="link">
+    - Label categories in `enabled-labels` must be valid
+    - Repository names must match pattern `org/repo`
+    - Webhook URL must be valid URI
+    - Color names for labels must be CSS3 colors
+  </Accordion>
+</AccordionGroup>
+
+## IDE Integration
+
+### Enabling Schema Validation in Your Editor
+
+Add the schema reference to the **first line** of your `config.yaml`:
+
+```yaml config.yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/myk-org/github-webhook-server/refs/heads/main/webhook_server/config/schema.yaml
+
+github-app-id: 123456
+webhook-ip: https://your-domain.com/webhook_server
+github-tokens:
+  - ghp_your_github_token
+
+repositories:
+  my-repository:
+    name: my-org/my-repository
+    protected-branches:
+      main: []
+```
+
+### Supported Editors
+
+<CardGroup cols={3}>
+  <Card title="VS Code" icon="code">
+    - Install **YAML** extension by Red Hat
+    - Schema validation automatic
+    - Hover documentation
+    - Autocomplete
+  </Card>
+  <Card title="IntelliJ IDEA" icon="laptop-code">
+    - Built-in YAML support
+    - Schema validation automatic
+    - Quick documentation
+    - Code completion
+  </Card>
+  <Card title="Vim/Neovim" icon="terminal">
+    - Install `yaml-language-server`
+    - Configure with coc.nvim or LSP
+    - Schema validation via LSP
+  </Card>
+</CardGroup>
+
+### IDE Features with Schema
+
+<Tabs>
+  <Tab title="Autocompletion">
+    Type to see available fields:
+
+    ```yaml
+    repositories:
+      my-repo:
+        name: org/repo
+        min  # ← Press Ctrl+Space
+        # Suggestions:
+        # - minimum-lgtm
+        # - mask-sensitive-data
+    ```
+  </Tab>
+
+  <Tab title="Validation Errors">
+    Red squiggles under invalid values:
+
+    ```yaml
+    log-level: TRACE  # ❌ Error: Must be INFO or DEBUG
+    port: "5000"      # ❌ Error: Must be integer, not string
+    ```
+  </Tab>
+
+  <Tab title="Hover Documentation">
+    Hover over fields to see descriptions:
+
+    ```yaml
+    minimum-lgtm: 2
+    # Hover shows:
+    # "Minimum number of approvals from approvers required to merge PR"
+    ```
+  </Tab>
+
+  <Tab title="Enum Suggestions">
+    Autocomplete for restricted values:
+
+    ```yaml
+    ai-features:
+      ai-provider:  # ← Suggests: claude, gemini, cursor
+      conventional-title:  # ← Suggests: "true", "false", "fix"
+    ```
+  </Tab>
+</Tabs>
+
+## Validation Commands
+
+### Validate Configuration Files
+
+Use the built-in validator script to check your configuration:
+
+```bash
+# Validate your config.yaml
+uv run webhook_server/tests/test_schema_validator.py config.yaml
+
+# Validate example configuration
+uv run webhook_server/tests/test_schema_validator.py examples/config.yaml
+
+# Validate repository-specific config
+uv run webhook_server/tests/test_schema_validator.py .github-webhook-server.yaml
+```
+
+**Output on success:**
+
+```bash
+✅ config.yaml is valid
+```
+
+**Output on error:**
+
+```bash
+❌ config.yaml validation failed:
+Error at repositories.my-repo.minimum-lgtm: '5' is not of type 'integer'
+Error at log-level: 'TRACE' is not one of ['INFO', 'DEBUG']
+```
+
+### Running Configuration Tests
+
+Run the full test suite for configuration validation:
+
+```bash
+# Run all schema validation tests
+uv run pytest webhook_server/tests/test_config_schema.py -v
+
+# Run specific test
+uv run pytest webhook_server/tests/test_config_schema.py::TestConfigSchema::test_valid_full_config_loads -v
+
+# Run with coverage
+uv run pytest webhook_server/tests/test_config_schema.py --cov=webhook_server.libs.config
+```
+
+**Test categories:**
+
+<CodeGroup>
+
+```python Valid Configurations
+test_valid_minimal_config()        # Minimal required fields
+test_valid_full_config_loads()     # Full config with all options
+test_valid_pr_size_thresholds()    # PR size label validation
+test_valid_labels_config()         # Label category validation
+```
+
+```python Invalid Configurations
+test_missing_required_fields()     # Missing github-app-id, etc.
+test_invalid_types()               # Wrong field types
+test_invalid_enum_values()         # Invalid enum choices
+test_invalid_label_categories()    # Unknown label categories
+```
+
+```python Edge Cases
+test_empty_config()                # Empty YAML file
+test_malformed_yaml()              # Syntax errors
+test_unknown_fields()              # Extra fields not in schema
+```
+
+</CodeGroup>
+
+## Validation Features
+
+### Required Fields Validation
+
+<ParamField path="github-app-id" type="integer" required>
+  GitHub App ID for webhook authentication
+</ParamField>
+
+<ParamField path="webhook-ip" type="string (uri)" required>
+  Full webhook URL including path (e.g., `https://your-domain.com/webhook_server`)
+</ParamField>
+
+<ParamField path="github-tokens" type="array<string>" required>
+  At least one GitHub Personal Access Token with admin permissions
+</ParamField>
+
+<ParamField path="repositories" type="object" required>
+  Map of repository short names to configuration objects, each containing:
+  - `name` (required): Full repository name in `org/repo` format
+  - Other repository-level settings (optional)
+</ParamField>
+
+**Example minimal valid config:**
+
+```yaml
+github-app-id: 123456
+webhook-ip: https://example.com/webhook_server
+github-tokens:
+  - ghp_token123
+repositories:
+  my-repo:
+    name: org/my-repo
+```
+
+### Type Checking Examples
+
+<CodeGroup>
+
+```yaml Valid Types
+port: 5000                    # integer ✅
+max-workers: 10               # integer ✅
+verify-github-ips: true       # boolean ✅
+log-level: INFO               # string enum ✅
+minimum-lgtm: 2               # integer ✅
+```
+
+```yaml Invalid Types
+port: "5000"                  # string (should be integer) ❌
+max-workers: 10.5             # float (should be integer) ❌
+verify-github-ips: "true"     # string (should be boolean) ❌
+log-level: TRACE              # invalid enum value ❌
+minimum-lgtm: "two"           # string (should be integer) ❌
+```
+
+</CodeGroup>
+
+### Enum Validation Examples
+
+<CodeGroup>
+
+```yaml Valid Enums
+log-level: INFO               # ✅
+log-level: DEBUG              # ✅
+
+ai-features:
+  ai-provider: claude         # ✅
+  ai-provider: gemini         # ✅
+  ai-provider: cursor         # ✅
+  conventional-title: "true"  # ✅
+  conventional-title: "false" # ✅
+  conventional-title: "fix"   # ✅
+```
+
+```yaml Invalid Enums
+log-level: TRACE              # ❌ Not in [INFO, DEBUG]
+log-level: WARNING            # ❌ Not in [INFO, DEBUG]
+
+ai-features:
+  ai-provider: openai         # ❌ Not in [claude, gemini, cursor]
+  conventional-title: "auto"  # ❌ Not in ["true", "false", "fix"]
+```
+
+</CodeGroup>
+
+### Label Categories Validation
+
+The schema validates `enabled-labels` against allowed categories:
+
+<CodeGroup>
+
+```yaml Valid Label Categories
+labels:
+  enabled-labels:
+    - verified          # ✅
+    - hold              # ✅
+    - wip               # ✅
+    - needs-rebase      # ✅
+    - has-conflicts     # ✅
+    - can-be-merged     # ✅
+    - size              # ✅
+    - branch            # ✅
+    - cherry-pick       # ✅
+    - automerge         # ✅
+```
+
+```yaml Invalid Label Categories
+labels:
+  enabled-labels:
+    - verified          # ✅
+    - approved          # ❌ Not a valid category
+    - custom-label      # ❌ Not a valid category
+    - lgtm              # ❌ Not a valid category (always enabled)
+```
+
+</CodeGroup>
+
+<Note>
+**Review labels** (`approved-*`, `lgtm-*`, `changes-requested-*`) are **always enabled** and cannot be disabled.
+</Note>
+
+### Structural Validation
+
+The schema enforces correct nesting and structure:
+
+<CodeGroup>
+
+```yaml Valid Structure
+repositories:
+  my-repo:
+    name: org/my-repo
+    container:
+      username: user
+      password: pass
+      repository: quay.io/org/repo
+      tag: latest
+    pr-size-thresholds:
+      Small:
+        threshold: 50
+        color: green
+```
+
+```yaml Invalid Structure
+repositories:
+  my-repo: org/my-repo        # ❌ Should be object with 'name' field
+  
+container:                    # ❌ Should be under repository config
+  username: user
+  password: pass
+
+pr-size-thresholds:           # ❌ Should be under repository config
+  Small: 50                   # ❌ Should be object with threshold/color
+```
+
+</CodeGroup>
+
+## Common Validation Errors
+
+### Error: Missing Required Field
+
+```bash
+❌ Error: 'github-app-id' is a required property
+```
+
+**Fix:** Add the required field:
+
+```yaml
+github-app-id: 123456  # Add this
+```
+
+### Error: Invalid Type
+
+```bash
+❌ Error at port: '5000' is not of type 'integer'
+```
+
+**Fix:** Remove quotes from numeric values:
+
+```yaml
+port: 5000  # Not "5000"
+```
+
+### Error: Invalid Enum Value
+
+```bash
+❌ Error at log-level: 'WARNING' is not one of ['INFO', 'DEBUG']
+```
+
+**Fix:** Use a valid enum value:
+
+```yaml
+log-level: INFO  # Or DEBUG
+```
+
+### Error: Invalid Label Category
+
+```bash
+❌ Invalid label categories in enabled-labels: ['custom-label']. 
+Valid categories: ['automerge', 'branch', 'can-be-merged', 'cherry-pick', 
+'has-conflicts', 'hold', 'needs-rebase', 'size', 'verified', 'wip']
+```
+
+**Fix:** Use only valid categories:
+
+```yaml
+labels:
+  enabled-labels:
+    - verified
+    - hold
+    - wip
+    # Remove 'custom-label'
+```
+
+### Error: Malformed YAML
+
+```bash
+❌ yaml.scanner.ScannerError: mapping values are not allowed here
+```
+
+**Fix:** Check YAML syntax (indentation, colons, quotes):
+
+```yaml
+# ❌ Wrong
+repositories:
+  my-repo
+    name: org/repo
+
+# ✅ Correct
+repositories:
+  my-repo:
+    name: org/repo
+```
+
+## Validation Best Practices
+
+<Steps>
+  <Step title="Enable Schema in IDE">
+    Add schema reference to first line of config files for real-time validation
+  </Step>
+
+  <Step title="Validate Before Commit">
+    Run `uv run webhook_server/tests/test_schema_validator.py config.yaml` before committing
+  </Step>
+
+  <Step title="Test in Staging First">
+    Deploy configuration changes to staging environment before production
+  </Step>
+
+  <Step title="Use Version Control">
+    Commit config files to git and use pull requests for review
+  </Step>
+
+  <Step title="Document Custom Settings">
+    Add comments explaining non-obvious configuration choices
+  </Step>
+
+  <Step title="Run Full Test Suite">
+    Run `uv run pytest webhook_server/tests/test_config_schema.py` after schema changes
+  </Step>
+</Steps>
+
+## Pre-Commit Hook Integration
+
+Validate configuration automatically before commits:
+
+```yaml .pre-commit-config.yaml
+repos:
+  - repo: local
+    hooks:
+      - id: validate-webhook-config
+        name: Validate webhook server config
+        entry: uv run webhook_server/tests/test_schema_validator.py
+        language: system
+        files: ^(config\.yaml|.*\.github-webhook-server\.yaml)$
+        pass_filenames: true
+```
+
+**Install pre-commit:**
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+**Now config files are validated automatically:**
+
+```bash
+git commit -m "Update config"
+
+# Hook runs:
+Validate webhook server config..................................✅ Passed
+```
+
+## Configuration Reference
+
+### Root Level Options
+
+<ResponseField name="Server" type="object">
+  - `ip-bind` (string): IP address to bind server (default: `0.0.0.0`)
+  - `port` (integer): Port number (default: `5000`)
+  - `max-workers` (integer): Worker count (default: `10`)
+  - `log-level` (enum): `INFO` or `DEBUG`
+  - `log-file` (string): Log file path
+</ResponseField>
+
+<ResponseField name="Security" type="object">
+  - `webhook-secret` (string): HMAC signature secret
+  - `verify-github-ips` (boolean): IP allowlist validation
+  - `verify-cloudflare-ips` (boolean): Cloudflare IP validation
+  - `disable-ssl-warnings` (boolean): Suppress SSL warnings
+</ResponseField>
+
+<ResponseField name="GitHub" type="object">
+  - `github-app-id` (integer, required): GitHub App ID
+  - `github-tokens` (array, required): Personal access tokens
+  - `webhook-ip` (string, required): Full webhook URL
+</ResponseField>
+
+### Repository Level Options
+
+<ResponseField name="Basic" type="object">
+  - `name` (string, required): Full repository name (`org/repo`)
+  - `log-level` (enum): `INFO` or `DEBUG`
+  - `log-file` (string): Repository-specific log file
+  - `slack-webhook-url` (string): Slack notifications
+</ResponseField>
+
+<ResponseField name="Features" type="object">
+  - `verified-job` (boolean): Enable verified label automation
+  - `pre-commit` (boolean): Run pre-commit hooks
+  - `pypi` (object): PyPI publishing configuration
+  - `tox` (object): Tox test configuration
+  - `container` (object): Container build/push configuration
+</ResponseField>
+
+<ResponseField name="Pull Requests" type="object">
+  - `minimum-lgtm` (integer): Required approvals count
+  - `conventional-title` (string): Conventional commit validation
+  - `can-be-merged-required-labels` (array): Labels required to merge
+  - `create-issue-for-new-pr` (boolean): Auto-create tracking issues
+</ResponseField>
+
+<ResponseField name="Labels" type="object">
+  - `enabled-labels` (array): Label categories to enable
+  - `colors` (object): Custom label colors
+  - `pr-size-thresholds` (object): PR size label configuration
+</ResponseField>
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Configuration Guide" icon="gear" href="/configuration">
+    Complete configuration options and examples
+  </Card>
+  <Card title="Schema Reference" icon="file-code" href="https://github.com/myk-org/github-webhook-server/blob/main/webhook_server/config/schema.yaml">
+    Full JSON Schema definition on GitHub
+  </Card>
+  <Card title="Examples" icon="code" href="https://github.com/myk-org/github-webhook-server/tree/main/examples">
+    Example configuration files
+  </Card>
+  <Card title="Testing" icon="flask" href="/advanced/contributing">
+    Running tests and validation
+  </Card>
+</CardGroup>

@@ -1,0 +1,193 @@
+---
+title: Introduction
+description: Enterprise-grade GitHub webhook automation for streamlined repository management and pull request workflows
+---
+
+# GitHub Webhook Server
+
+A comprehensive [FastAPI-based](https://fastapi.tiangolo.com) webhook server for automating GitHub repository management and pull request workflows. Built with Python 3.12+, it provides enterprise-grade automation through intelligent webhook processing.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get up and running with GitHub Webhook Server in under 5 minutes
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Container deployment, building from source, and local development setup
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Configure webhooks, repositories, and automation workflows
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/webhook-endpoint">
+    Complete API documentation for webhooks, health checks, and monitoring
+  </Card>
+</CardGroup>
+
+## What is GitHub Webhook Server?
+
+GitHub Webhook Server streamlines repository management by automating repetitive tasks through webhook-driven workflows. When GitHub sends events (pull requests, pushes, comments), the server processes them according to your configuration—assigning reviewers, running tests, managing labels, and enforcing merge requirements.
+
+## Architecture
+
+The server follows an event-driven architecture that efficiently processes GitHub webhooks:
+
+```
+GitHub Events → Webhook Server → Repository Management
+                      ↓
+              ┌─────────────────┐
+              │  FastAPI Server │
+              └─────────────────┘
+                      ↓
+              ┌─────────────────┐
+              │ Webhook Handler │
+              └─────────────────┘
+                      ↓
+    ┌─────────────────────────────────────┐
+    │           Automation                │
+    ├─────────────────────────────────────┤
+    │ • Pull Request Management          │
+    │ • Branch Protection                │
+    │ • Container Building               │
+    │ • PyPI Publishing                  │
+    │ • Code Review Automation           │
+    └─────────────────────────────────────┘
+```
+
+**Key Architecture Components:**
+
+- **FastAPI Server**: High-performance asynchronous webhook processing
+- **Event Handlers**: Specialized handlers for different GitHub events
+- **Configuration System**: YAML-based with repository-level overrides
+- **GitHub API Integration**: Efficient repository data fetching with token rotation
+- **Type-Safe**: Full mypy strict mode coverage ensuring code reliability
+
+## Key Features
+
+### Repository Management
+
+<CardGroup cols={2}>
+  <Card title="Automated Setup" icon="wand-magic-sparkles">
+    Automatic repository configuration with branch protection rules and label management
+  </Card>
+  <Card title="Multi-Repository" icon="folder-tree">
+    Centralized configuration supporting multiple repositories with individual settings
+  </Card>
+</CardGroup>
+
+- **Automated repository setup** with branch protection rules
+- **Label management** with automatic creation of missing labels
+- **Webhook configuration** with automatic setup and validation
+- **Multi-repository support** with centralized configuration
+
+### Pull Request Automation
+
+<Note>
+  **OWNERS-based reviewer assignment** automatically assigns the right reviewers based on file paths changed in the PR.
+</Note>
+
+- **Intelligent reviewer assignment** based on OWNERS files
+- **Automated labeling** including size calculation and status tracking
+- **Configurable PR size labels** with custom names, thresholds, and colors
+- **Merge readiness validation** with comprehensive checks
+- **Issue tracking** with automatic creation and lifecycle management
+
+### CI/CD Integration
+
+- **Container building and publishing** with multi-registry support (Quay.io, Docker Hub, GHCR)
+- **PyPI package publishing** for Python projects
+- **Tox testing integration** with configurable test environments
+- **Pre-commit hook validation** for code quality assurance
+- **PR Test Oracle** - AI-powered test recommendations based on PR diff analysis
+
+### User Commands
+
+Interact with pull requests through simple comment-based commands:
+
+```bash
+# Mark PR as verified
+/verified
+
+# Approve and merge
+/approve
+
+# Run tests
+/retest all
+
+# Cherry-pick to branches
+/cherry-pick v1.0 v2.0
+
+# Request AI test recommendations
+/test-oracle
+```
+
+### Security & Compliance
+
+<Warning>
+  Always configure webhook signature verification and IP allowlisting for production deployments.
+</Warning>
+
+- **IP allowlist validation** for GitHub and Cloudflare
+- **Webhook signature verification** to prevent unauthorized access
+- **Token rotation support** with automatic failover
+- **SSL/TLS configuration** with customizable warning controls
+
+## Performance & Scalability
+
+- **Performance Optimized**: Repository data fetched efficiently to minimize API calls
+- **Memory-Optimized Log Viewer**: 90% reduction in memory usage with streaming architecture
+- **Concurrent Processing**: Handles multiple webhooks simultaneously with worker pools
+- **Rate Limit Management**: Automatic token rotation to distribute API calls
+
+## AI-Powered Features
+
+<Info>
+  AI features require API keys for Claude, Gemini, or Cursor. See [Configuration](/configuration) for setup details.
+</Info>
+
+### PR Test Oracle Integration
+
+Analyzes PR diffs with AI and recommends which tests to run based on code changes. Supports Claude, Gemini, and Cursor AI providers.
+
+### Conventional Title Suggestions
+
+AI-powered suggestions for PR titles following Conventional Commits specification with three modes:
+- **Suggest**: Show AI-suggested title in check run output
+- **Fix**: Auto-update PR title with validated AI suggestion
+- **Disabled**: Traditional validation only
+
+## Prerequisites
+
+Before installing GitHub Webhook Server, ensure you have:
+
+- **Python 3.12+** (3.13 recommended)
+- **GitHub App** with appropriate permissions (or Personal Access Tokens)
+- **Container runtime** (Podman/Docker) for containerized deployment
+- **Network access** to GitHub API and webhook endpoints
+
+### GitHub App Permissions
+
+Your GitHub App requires:
+
+**Repository permissions:**
+- Contents: Read & Write
+- Issues: Read & Write
+- Pull requests: Read & Write
+- Checks: Read & Write
+- Metadata: Read
+- Administration: Read & Write (for branch protection)
+
+**Organization permissions:**
+- Members: Read (for OWNERS validation)
+
+**Events:**
+- Push, Pull request, Issue comment, Check run, Pull request review
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart Guide" icon="play" href="/quickstart">
+    Follow our quickstart to deploy and configure your first webhook server
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Detailed installation instructions for containers, source builds, and development
+  </Card>
+</CardGroup>

@@ -1,0 +1,382 @@
+---
+title: MCP Overview
+description: Model Context Protocol integration for AI-powered webhook log analysis and monitoring
+---
+
+The webhook server includes **Model Context Protocol (MCP)** integration, enabling AI agents to interact with webhook logs and monitoring data programmatically. This feature allows intelligent automation and analysis of your GitHub webhook processing workflows.
+
+## What is MCP?
+
+Model Context Protocol (MCP) is a standard protocol that enables AI agents (like Claude, ChatGPT, or custom AI tools) to access and analyze your webhook server data programmatically. With MCP integration, you can:
+
+- Ask AI agents natural language questions about your webhooks
+- Automate troubleshooting and error analysis
+- Monitor webhook health and performance patterns
+- Generate intelligent reports on repository automation
+
+## Key Features
+
+### Real-time Log Analysis
+AI agents can query, filter, and analyze webhook processing logs using natural language queries. Instead of manually searching through logs, ask questions like "Show me recent webhook errors from the last hour."
+
+### System Monitoring
+Access to health status and system metrics enables AI-powered monitoring and alerting. AI agents can proactively identify issues before they impact your workflows.
+
+### Workflow Analysis
+Programmatic access to PR flow visualization and timing data allows AI agents to identify bottlenecks and optimization opportunities in your automation workflows.
+
+### Secure Architecture
+Only safe, read-only endpoints are exposed to AI agents. The core webhook processing endpoint is **NOT** accessible via MCP.
+
+### Intelligent Troubleshooting
+AI-powered error pattern recognition provides actionable debugging assistance and root cause analysis.
+
+## Security Design
+
+<Warning>
+  The MCP integration follows a **security-first approach** with strict endpoint isolation to protect your webhook processing infrastructure.
+</Warning>
+
+### Endpoint Isolation
+
+**✅ Protected (NOT exposed to MCP):**
+- `/webhook_server` - Core webhook processing endpoint
+- Static files (CSS, JavaScript, images)
+- HTML pages and web interfaces
+
+**✅ Exposed (Read-only access):**
+- `/mcp/webhook_server/healthcheck` - Server health status
+- `/mcp/logs/api/entries` - Historical log data with filtering
+- `/mcp/logs/api/export` - Log export functionality
+- `/mcp/logs/api/pr-flow/{identifier}` - PR flow visualization data
+- `/mcp/logs/api/workflow-steps/{identifier}` - Workflow timeline data
+
+### Dual-App Architecture
+
+MCP runs on a **separate FastAPI app instance** that duplicates only the safe monitoring endpoints while excluding webhook processing, static files, and HTML pages. This architectural separation ensures:
+
+- Webhook processing cannot be triggered or manipulated by AI agents
+- Only read-only monitoring and log analysis endpoints are available
+- Clean, focused interface designed specifically for AI operations
+- Security boundaries are enforced at the application layer
+
+### Read-Only Access
+
+All MCP endpoints provide **read-only access** to data. AI agents can query and analyze but cannot:
+- Process webhooks
+- Modify configurations
+- Trigger actions on repositories
+- Delete or modify log data
+- Access administrative functions
+
+## Critical Security Warning
+
+<Warning>
+  **IMPORTANT**: The `/mcp/logs/*` endpoints expose potentially **highly sensitive data** including:
+  
+  - 🔑 **GitHub Personal Access Tokens** and API credentials
+  - 👤 **User information and GitHub usernames**
+  - 📋 **Repository details and webhook payloads**
+  - 🔒 **Internal system information and error details**
+</Warning>
+
+### Required Security Measures
+
+**Deploy MCP endpoints only on trusted networks:**
+
+<AccordionGroup>
+  <Accordion title="Network Isolation (Recommended)">
+    - Deploy **only on trusted networks** (VPN, internal network)
+    - Use **SSH tunneling** for remote access
+    - Bind to **localhost** (`127.0.0.1`) for local-only access
+    
+    ```yaml
+    # config.yaml
+    ip-bind: "127.0.0.1"  # localhost only
+    port: 5000
+    ```
+  </Accordion>
+  
+  <Accordion title="Reverse Proxy Authentication">
+    - **Never expose MCP endpoints** directly to the internet
+    - Implement **reverse proxy authentication** for any external access
+    - Use HTTP Basic Auth, OAuth, or other authentication methods
+    
+    ```nginx
+    location /mcp {
+        auth_basic "MCP API - Authorized Personnel Only";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+        proxy_pass http://localhost:5000;
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Firewall Rules">
+    - Use **firewall rules** to restrict access to authorized IP ranges only
+    - Configure IP allowlisting at network layer
+    
+    ```bash
+    # Allow from corporate network only
+    sudo iptables -A INPUT -p tcp --dport 5000 -s 10.0.0.0/8 -j ACCEPT
+    sudo iptables -A INPUT -p tcp --dport 5000 -j DROP
+    ```
+  </Accordion>
+  
+  <Accordion title="Monitoring and Auditing">
+    - Monitor and **audit access** to MCP endpoints
+    - Log all API requests for security review
+    - Set up alerts for unusual access patterns
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  Despite being read-only, MCP endpoints require the **same security considerations** as the main log viewer due to the sensitive nature of webhook and system data. See [Log Viewer Security](/security/log-viewer-security) for comprehensive security guidance.
+</Note>
+
+## AI Agent Capabilities
+
+With MCP integration, AI agents can perform sophisticated analysis and monitoring tasks:
+
+### Real-time Monitoring
+- **Monitor webhook health** and processing status in real-time
+- **Provide intelligent alerts** for system anomalies and failures
+- Track system performance metrics and resource utilization
+
+### Intelligent Analysis
+- **Analyze error patterns** and provide troubleshooting recommendations
+- **Track PR workflows** and identify performance bottlenecks
+- Compare processing times between successful and failed webhooks
+- Identify memory usage patterns and resource constraints
+
+### Reporting and Insights
+- **Generate comprehensive reports** on repository automation performance
+- **Query logs naturally** using plain English questions
+- **Export filtered data** for further analysis and reporting
+- Provide trend analysis and predictive insights
+
+## Configuration
+
+### Enable MCP Server
+
+MCP endpoints are controlled by the `ENABLE_MCP_SERVER` environment variable:
+
+```bash
+# Enable MCP server
+export ENABLE_MCP_SERVER=true
+
+# Start webhook server
+uv run entrypoint.py
+```
+
+**Docker Compose:**
+
+```yaml
+services:
+  github-webhook-server:
+    image: ghcr.io/myk-org/github-webhook-server:latest
+    environment:
+      - ENABLE_MCP_SERVER=true
+    ports:
+      - "5000:5000"
+```
+
+### MCP Endpoint URL
+
+The MCP server is automatically available at:
+
+```
+http://your-server:5000/mcp
+```
+
+### Claude Desktop Integration
+
+To connect Claude Desktop to your webhook server's MCP endpoints:
+
+**1. Open Claude Desktop MCP Settings**
+
+Add the following configuration to your MCP settings file:
+
+```json
+{
+  "mcpServers": {
+    "github-webhook-server-logs": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://your-server:5000/mcp", "--allow-http"]
+    }
+  }
+}
+```
+
+**2. Replace `your-server` with your actual server address:**
+
+- **Localhost:** `http://localhost:5000/mcp`
+- **SSH Tunnel:** `http://localhost:5000/mcp` (after establishing tunnel)
+- **VPN:** `http://10.0.0.1:5000/mcp` (internal VPN IP)
+
+**3. Restart Claude Desktop**
+
+After adding the configuration, restart Claude Desktop to establish the MCP connection.
+
+<Warning>
+  **Security Note:** The `--allow-http` flag is required for non-HTTPS connections. For production use, configure HTTPS and remove this flag:
+  
+  ```json
+  "args": ["mcp-remote", "https://webhook.example.com/mcp"]
+  ```
+</Warning>
+
+## Example AI Queries
+
+Once configured, you can ask AI agents natural language questions:
+
+### Error Analysis
+```
+"Show me recent webhook errors from the last hour"
+"Find all webhook failures for repository myorg/myrepo today"
+"What are the most common error patterns in the last 24 hours?"
+```
+
+### System Health
+```
+"What's the current health status of my webhook server?"
+"Show me memory usage patterns in recent webhook processing"
+"Are there any rate limiting issues?"
+```
+
+### Performance Analysis
+```
+"Analyze the processing time for PR #123 and identify bottlenecks"
+"Compare processing times between successful and failed webhooks"
+"Which repositories have the slowest webhook processing?"
+```
+
+### Data Export
+```
+"Export error logs from the last 24 hours for analysis"
+"Generate a report of all failed webhooks this week"
+"Show me all logs for repository owner/repo from yesterday"
+```
+
+## Use Cases by Team
+
+### Development Teams
+
+**Automated Troubleshooting**
+- AI-powered error analysis with actionable recommendations
+- Natural language queries for rapid debugging
+- Pattern recognition across multiple repositories
+
+**Performance Monitoring**
+- Intelligent identification of processing bottlenecks
+- Automated detection of degraded performance
+- Trend analysis for capacity planning
+
+**Proactive Alerting**
+- AI agents monitor for webhook processing issues
+- Intelligent alerts before issues impact workflows
+- Automated incident correlation
+
+### DevOps Engineers
+
+**Infrastructure Monitoring**
+- Real-time health checks and status reporting
+- Resource utilization analysis
+- Automated capacity recommendations
+
+**Incident Response**
+- AI-driven root cause analysis
+- Automated correlation of related failures
+- Intelligent runbook recommendations
+
+**Capacity Planning**
+- Historical performance data analysis
+- Growth trend identification
+- Resource scaling recommendations
+
+### Repository Maintainers
+
+**PR Workflow Optimization**
+- Identify and resolve processing bottlenecks
+- Analyze contributor patterns
+- Optimize automation rules
+
+**Community Contribution Monitoring**
+- Automated quality metrics
+- Contributor activity analysis
+- PR processing efficiency tracking
+
+**Quality Assurance**
+- Automated reporting on PR processing
+- Trend analysis for code quality
+- Integration health monitoring
+
+## Technical Implementation
+
+The MCP integration is built using the `fastapi-mcp` library and provides:
+
+### Automatic Endpoint Discovery
+AI agents can automatically discover and explore available endpoints without manual configuration.
+
+### Structured Responses
+All data is returned in consistent, parseable JSON formats optimized for AI processing.
+
+### Error Handling
+Graceful error responses with helpful debugging information when issues occur.
+
+### Performance Optimization
+Efficient data access patterns ensure responsive AI interactions even with large datasets.
+
+### Stateless Architecture
+Stateless HTTP transport eliminates session management complexity and improves reliability.
+
+## Comparison: MCP vs Standard Endpoints
+
+| Feature | Standard Endpoints | MCP Endpoints |
+|---------|-------------------|---------------|
+| **Base Path** | `/logs/api/*` | `/mcp/logs/api/*` |
+| **Purpose** | Web UI and direct API access | AI agent integration |
+| **Discovery** | Manual API documentation | Automatic endpoint discovery |
+| **Authentication** | None (network-level only) | None (network-level only) |
+| **Response Format** | JSON (human-readable) | JSON (AI-optimized) |
+| **Webhook Processing** | Not accessible | Not accessible ✅ |
+| **Static Files** | Served via `/static` | Not accessible ✅ |
+| **Security** | Same requirements | Same requirements |
+
+<Note>
+  MCP endpoints are functionally equivalent to standard log viewer API endpoints but optimized for AI agent consumption with automatic discovery and structured metadata.
+</Note>
+
+## Disabling MCP Endpoints
+
+For maximum security in production environments, consider disabling MCP endpoints:
+
+```yaml
+# docker-compose.yaml
+services:
+  github-webhook-server:
+    environment:
+      - ENABLE_MCP_SERVER=false  # Disable MCP endpoints
+```
+
+When disabled:
+- All `/mcp/*` endpoints return 404 Not Found
+- AI agent connections will fail (expected behavior)
+- Standard log viewer endpoints remain unaffected
+- Webhook processing continues normally
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="MCP Endpoints" icon="code" href="/api/mcp-endpoints">
+    Detailed API reference for all MCP endpoints
+  </Card>
+  <Card title="Log Viewer Security" icon="shield" href="/security/log-viewer-security">
+    Comprehensive security measures for MCP and log endpoints
+  </Card>
+  <Card title="Log Viewer" icon="chart-line" href="/features/log-viewer">
+    Web-based log viewer features and usage
+  </Card>
+  <Card title="AI Integration" icon="robot" href="/features/ai-integration">
+    AI-powered features for PR automation
+  </Card>
+</CardGroup>

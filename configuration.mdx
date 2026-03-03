@@ -1,0 +1,632 @@
+---
+title: Configuration
+description: Configure GitHub Webhook Server with environment variables, YAML configuration, and repository-level overrides
+---
+
+# Configuration
+
+GitHub Webhook Server uses a flexible YAML-based configuration system with support for global settings, repository-specific overrides, and environment variables. Configuration changes take effect immediately without server restart.
+
+## Configuration Files
+
+### Global Configuration
+
+The main configuration file is `config.yaml` in your data directory (default: `/home/podman/data/config.yaml`).
+
+```yaml config.yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/myk-org/github-webhook-server/refs/heads/main/webhook_server/config/schema.yaml
+
+github-app-id: 123456
+webhook-ip: https://your-domain.com/webhook_server
+github-tokens:
+  - ghp_your_github_token_here
+
+repositories:
+  my-repository:
+    name: my-org/my-repository
+    protected-branches:
+      main: []
+```
+
+<Info>
+  The `yaml-language-server` comment enables IDE autocompletion and validation. Keep it at the top of your config file.
+</Info>
+
+### Repository-Level Overrides
+
+Create `.github-webhook-server.yaml` in your repository root to override or extend global configuration:
+
+```yaml .github-webhook-server.yaml
+minimum-lgtm: 2
+can-be-merged-required-labels:
+  - "ready-to-merge"
+pre-commit: true
+conventional-title: "feat,fix,docs"
+
+labels:
+  enabled-labels:
+    - verified
+    - hold
+    - wip
+  colors:
+    hold: crimson
+    verified: limegreen
+```
+
+**Benefits:**
+- Version-controlled configuration alongside your code
+- Per-project customization without modifying global config
+- Zero-downtime updates to repository settings
+- Repository maintainers can manage their own automation
+
+## Environment Variables
+
+Environment variables control server behavior and override config file settings.
+
+### Core Settings
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `WEBHOOK_SERVER_DATA_DIR` | Directory containing config.yaml | `/home/podman/data` | Yes |
+| `WEBHOOK_SERVER_IP_BIND` | IP address to bind server | `0.0.0.0` | No |
+| `WEBHOOK_SERVER_PORT` | Port to bind server | `5000` | No |
+| `MAX_WORKERS` | Maximum number of workers | `10` | No |
+
+### Security Settings
+
+<Warning>
+  Always configure `WEBHOOK_SECRET` and `VERIFY_GITHUB_IPS` for production deployments.
+</Warning>
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `WEBHOOK_SECRET` | GitHub webhook secret for HMAC verification | - | Recommended |
+| `VERIFY_GITHUB_IPS` | Verify requests from GitHub IP ranges | `false` | No |
+| `VERIFY_CLOUDFLARE_IPS` | Verify requests from Cloudflare IPs | `false` | No |
+
+### Feature Toggles
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `ENABLE_LOG_SERVER` | Enable log viewer web interface | `false` | No |
+| `ENABLE_MCP_SERVER` | Enable MCP server for AI agents | `false` | No |
+
+### AI CLI API Keys
+
+For AI-powered features like test-oracle and conventional title suggestions:
+
+| Variable | Description | Provider |
+|----------|-------------|---------|
+| `ANTHROPIC_API_KEY` | API key for Claude Code CLI | Claude |
+| `GEMINI_API_KEY` | API key for Gemini CLI | Gemini |
+| `CURSOR_API_KEY` | API key for Cursor Agent CLI | Cursor |
+
+## Minimal Configuration
+
+The smallest working configuration requires only three fields:
+
+```yaml config.yaml
+github-app-id: 123456
+webhook-ip: https://your-domain.com/webhook_server
+github-tokens:
+  - ghp_your_token_here
+
+repositories:
+  my-repository:
+    name: my-org/my-repository
+    protected-branches:
+      main: []
+```
+
+This is sufficient for:
+- Basic webhook processing
+- Pull request labeling
+- Branch protection
+
+## Advanced Configuration
+
+### Server Configuration
+
+```yaml config.yaml
+# Logging
+log-level: INFO  # DEBUG, INFO, WARNING, ERROR
+log-file: webhook-server.log
+mcp-log-file: mcp_server.log
+logs-server-log-file: logs_server.log
+mask-sensitive-data: true  # Mask tokens in logs
+
+# Server settings
+ip-bind: "0.0.0.0"
+port: 5000
+max-workers: 20
+
+# Security
+webhook-secret: "your-webhook-secret"  # pragma: allowlist secret
+verify-github-ips: true
+verify-cloudflare-ips: true
+disable-ssl-warnings: false
+```
+
+### Global Defaults
+
+```yaml config.yaml
+# Status checks required for all repositories
+default-status-checks:
+  - "WIP"
+  - "can-be-merged"
+  - "build"
+
+# Users whose PRs are auto-verified and merged
+auto-verified-and-merged-users:
+  - "renovate[bot]"
+  - "dependabot[bot]"
+
+# Auto-verify cherry-picked PRs
+auto-verify-cherry-picked-prs: true
+
+# Create tracking issues for new PRs
+create-issue-for-new-pr: true
+
+# Assign cherry-pick PRs to original author
+cherry-pick-assign-to-pr-author: true
+```
+
+### Docker Registry Configuration
+
+For pulling private base images:
+
+```yaml config.yaml
+docker:
+  username: your-docker-username
+  password: your-docker-password
+```
+
+### Branch Protection
+
+Global branch protection rules applied to all repositories:
+
+```yaml config.yaml
+branch-protection:
+  strict: true
+  require_code_owner_reviews: true
+  dismiss_stale_reviews: false
+  required_approving_review_count: 1
+  required_linear_history: true
+  required_conversation_resolution: true
+```
+
+## Repository Configuration
+
+### Basic Repository Setup
+
+```yaml config.yaml
+repositories:
+  my-project:
+    name: my-org/my-project
+    log-level: DEBUG  # Override global log level
+    slack-webhook-url: https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK
+    
+    # Enable features
+    verified-job: true
+    pre-commit: true
+    
+    # Protected branches
+    protected-branches:
+      main: []
+      develop:
+        include-runs:
+          - "Required CI Check"
+        exclude-runs:
+          - "Optional Check"
+```
+
+### Pull Request Settings
+
+```yaml config.yaml
+repositories:
+  my-project:
+    name: my-org/my-project
+    
+    # Review requirements
+    minimum-lgtm: 2  # Require 2 approvals
+    
+    # Required labels for merge
+    can-be-merged-required-labels:
+      - "approved"
+      - "tests-passed"
+    
+    # Conventional Commits validation
+    conventional-title: "feat,fix,docs,refactor,test"
+    
+    # Auto-merge branches
+    set-auto-merge-prs:
+      - main
+      - develop
+    
+    protected-branches:
+      main: []
+```
+
+<Tip>
+  Use `"*"` for `conventional-title` to accept any type while enforcing format: `type: description`
+</Tip>
+
+### CI/CD Configuration
+
+<Accordion title="Tox Testing Integration">
+  ```yaml config.yaml
+  repositories:
+    my-project:
+      name: my-org/my-project
+      
+      tox:
+        main: all  # Run all tox environments for main branch PRs
+        develop: unit,integration  # Specific envs for develop
+        feature/*: quick  # Pattern matching for feature branches
+      
+      tox-python-version: "3.12"
+      
+      protected-branches:
+        main: []
+  ```
+
+  **How it works:**
+  - Triggered on pull request creation and updates
+  - Runs tox environments based on target branch
+  - Results reported as GitHub check runs
+</Accordion>
+
+<Accordion title="Container Building and Publishing">
+  ```yaml config.yaml
+  repositories:
+    my-project:
+      name: my-org/my-project
+      
+      container:
+        username: registry-user
+        password: registry-password
+        repository: quay.io/my-org/my-project
+        tag: latest
+        release: true  # Push on new releases
+        
+        # Build arguments
+        build-args:
+          - BUILD_VERSION=1.0.0
+          - PYTHON_VERSION=3.12
+        
+        # Podman build arguments
+        args:
+          - --format docker
+          - --no-cache
+      
+      protected-branches:
+        main: []
+  ```
+
+  **Trigger with command:**
+  ```bash
+  /build-and-push-container
+  /build-and-push-container --build-arg VERSION=2.0
+  ```
+</Accordion>
+
+<Accordion title="PyPI Publishing">
+  ```yaml config.yaml
+  repositories:
+    my-python-package:
+      name: my-org/my-python-package
+      
+      pypi:
+        token: pypi-AgEIcHlwaS5vcmc...
+      
+      protected-branches:
+        main: []
+  ```
+
+  **How it works:**
+  - Automatically publishes to PyPI on new releases
+  - Uses Poetry or setuptools for packaging
+  - Version extracted from release tag
+</Accordion>
+
+### Label Configuration
+
+<Accordion title="Enable/Disable Label Categories">
+  Control which automation labels are applied to pull requests:
+
+  ```yaml config.yaml
+  # Global label configuration
+  labels:
+    enabled-labels:
+      - verified
+      - hold
+      - wip
+      - needs-rebase
+      - has-conflicts
+      - can-be-merged
+      - size
+      - branch
+      - cherry-pick
+      - automerge
+    colors:
+      hold: red
+      verified: green
+      wip: orange
+      can-be-merged: limegreen
+  
+  # Repository-specific (overrides global)
+  repositories:
+    my-project:
+      name: my-org/my-project
+      labels:
+        enabled-labels:
+          - verified
+          - size
+          - can-be-merged
+        colors:
+          verified: lightgreen
+      protected-branches:
+        main: []
+  ```
+
+  **Available label categories:**
+
+  | Category | Labels | Description |
+  |----------|--------|-------------|
+  | `verified` | `verified` | Manual verification status |
+  | `hold` | `hold` | Block PR merging |
+  | `wip` | `wip` | Work in progress |
+  | `needs-rebase` | `needs-rebase` | PR needs rebasing |
+  | `has-conflicts` | `has-conflicts` | Merge conflicts |
+  | `can-be-merged` | `can-be-merged` | Meets all requirements |
+  | `size` | `size/XS`, `size/S`, etc. | PR size labels |
+  | `branch` | `branch/<name>` | Target branch |
+  | `cherry-pick` | `cherry-pick/<branch>` | Cherry-pick tracking |
+  | `automerge` | `automerge` | Auto-merge enabled |
+
+  <Note>
+    **Reviewed-by labels** (`approved-*`, `lgtm-*`, `changes-requested-*`, `commented-*`) are always enabled and cannot be disabled.
+  </Note>
+</Accordion>
+
+<Accordion title="Custom PR Size Labels">
+  Define custom size labels with your own thresholds and colors:
+
+  ```yaml config.yaml
+  # Global PR size labels
+  pr-size-thresholds:
+    Tiny:
+      threshold: 10  # 0-9 lines changed
+      color: lightgray
+    Small:
+      threshold: 50  # 10-49 lines changed
+      color: green
+    Medium:
+      threshold: 150  # 50-149 lines changed
+      color: orange
+    Large:
+      threshold: 300  # 150-299 lines changed
+      color: red
+    Massive:
+      threshold: inf  # 300+ lines (unbounded)
+      color: darkred
+  
+  # Repository-specific (overrides global)
+  repositories:
+    my-project:
+      name: my-org/my-project
+      pr-size-thresholds:
+        Express:
+          threshold: 25
+          color: lightblue
+        Standard:
+          threshold: 100
+          color: green
+        Premium:
+          threshold: 500
+          color: orange
+      protected-branches:
+        main: []
+  ```
+
+  **Rules:**
+  - `threshold`: Positive integer or `inf` for unbounded
+  - `color`: CSS3 color name (red, green, lightgray, etc.)
+  - Size = additions + deletions
+  - Use `inf` for largest category to catch all remaining PRs
+</Accordion>
+
+### AI Features
+
+<Accordion title="PR Test Oracle Integration">
+  AI-powered test recommendations based on PR diff analysis:
+
+  ```yaml config.yaml
+  # Global test-oracle configuration
+  test-oracle:
+    server-url: "http://localhost:8000"
+    ai-provider: "claude"  # claude | gemini | cursor
+    ai-model: "claude-opus-4-6[1m]"
+    test-patterns:
+      - "tests/**/*.py"
+    triggers:
+      - approved  # Run when /approve command used
+      # - pr-opened  # Run when PR opened
+      # - pr-synchronized  # Run when commits pushed
+  
+  # Repository-specific (overrides global)
+  repositories:
+    my-project:
+      name: my-org/my-project
+      test-oracle:
+        server-url: "http://localhost:8000"
+        ai-provider: "gemini"
+        ai-model: "gemini-pro"
+        test-patterns:
+          - "tests/**/*.py"
+        triggers:
+          - approved
+      protected-branches:
+        main: []
+  ```
+
+  **Trigger manually:**
+  ```bash
+  /test-oracle
+  ```
+
+  See [pr-test-oracle](https://github.com/myk-org/pr-test-oracle) for server setup.
+</Accordion>
+
+<Accordion title="AI Conventional Title Suggestions">
+  AI-powered PR title suggestions following Conventional Commits:
+
+  ```yaml config.yaml
+  # Global AI features
+  ai-features:
+    ai-provider: "claude"  # claude | gemini | cursor
+    ai-model: "claude-opus-4-6[1m]"
+    conventional-title: "true"  # "true" | "false" | "fix"
+  
+  # Repository-specific (overrides global)
+  repositories:
+    my-project:
+      name: my-org/my-project
+      ai-features:
+        ai-provider: "claude"
+        ai-model: "sonnet"
+        conventional-title: "fix"  # Auto-update PR title
+      protected-branches:
+        main: []
+  ```
+
+  **Modes:**
+  - `"true"`: Show AI suggestion in check run output when validation fails
+  - `"false"`: Disabled (default)
+  - `"fix"`: Automatically update PR title with validated AI suggestion
+
+  <Warning>
+    Requires AI CLI tools installed and API keys configured via environment variables.
+  </Warning>
+</Accordion>
+
+### Commands on Draft PRs
+
+```yaml config.yaml
+# Global setting: block all commands on draft PRs (default)
+# allow-commands-on-draft-prs: []  # Allow all commands
+
+# Allow specific commands globally
+allow-commands-on-draft-prs:
+  - build-and-push-container
+  - retest
+
+# Repository-specific (overrides global)
+repositories:
+  my-project:
+    name: my-org/my-project
+    allow-commands-on-draft-prs:
+      - build-and-push-container
+      - verified
+    protected-branches:
+      main: []
+```
+
+**Behavior:**
+- If not set: Commands blocked on draft PRs (default)
+- If empty array `[]`: All commands allowed
+- If array with values: Only listed commands allowed
+
+## Configuration Validation
+
+### Schema Validation
+
+Validate your configuration file before deploying:
+
+```bash
+# Validate configuration
+uv run webhook_server/tests/test_schema_validator.py config.yaml
+
+# Run schema tests
+uv run pytest webhook_server/tests/test_config_schema.py -v
+```
+
+### Real-time Validation
+
+IDEs with YAML Language Server support provide real-time validation:
+
+1. Ensure the schema comment is at the top of your config:
+   ```yaml
+   # yaml-language-server: $schema=https://raw.githubusercontent.com/myk-org/github-webhook-server/refs/heads/main/webhook_server/config/schema.yaml
+   ```
+
+2. Install YAML extension in your IDE:
+   - **VS Code**: [YAML by Red Hat](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml)
+   - **IntelliJ**: Built-in YAML support
+   - **Vim/Neovim**: [yaml-language-server](https://github.com/redhat-developer/yaml-language-server)
+
+3. Get autocompletion and validation as you type
+
+## Example Configurations
+
+The `examples/` directory contains comprehensive configuration examples:
+
+| File | Description |
+|------|-------------|
+| [`config.yaml`](https://github.com/myakove/github-webhook-server/blob/main/examples/config.yaml) | Complete configuration with all available options |
+| [`docker-compose.yaml`](https://github.com/myakove/github-webhook-server/blob/main/examples/docker-compose.yaml) | Docker Compose deployment configuration |
+| [`.github-webhook-server.yaml`](https://github.com/myakove/github-webhook-server/blob/main/examples/.github-webhook-server.yaml) | Repository-specific configuration template |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="OWNERS Files" icon="users" href="/concepts/owners-files">
+    Configure OWNERS files for intelligent reviewer assignment
+  </Card>
+  <Card title="User Commands" icon="terminal" href="/features/user-commands">
+    Learn all available commands for PR management
+  </Card>
+  <Card title="Security" icon="shield" href="/security/overview">
+    Configure security settings for production deployments
+  </Card>
+  <Card title="Monitoring" icon="chart-line" href="/advanced/monitoring">
+    Set up monitoring and log analysis
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Configuration Not Loading
+
+```bash
+# Check file exists
+ls -la $WEBHOOK_SERVER_DATA_DIR/config.yaml
+
+# Validate YAML syntax
+python3 -c "import yaml; yaml.safe_load(open('config.yaml'))"
+
+# Check server logs
+podman logs github-webhook-server | grep -i config
+```
+
+### Schema Validation Fails
+
+```bash
+# Run validation with verbose output
+uv run webhook_server/tests/test_schema_validator.py config.yaml --verbose
+
+# Check specific field
+uv run pytest webhook_server/tests/test_config_schema.py::TestConfigSchema::test_valid_full_config_loads -v
+```
+
+### Repository-Level Overrides Not Working
+
+1. Ensure `.github-webhook-server.yaml` is in repository root
+2. Check file permissions (must be readable)
+3. Validate YAML syntax
+4. Check server logs for parsing errors
+5. Verify repository name matches config
+
+<Info>
+  Configuration changes take effect immediately without server restart. The webhook server reloads configuration for each incoming webhook event.
+</Info>

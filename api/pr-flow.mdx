@@ -1,0 +1,311 @@
+---
+title: 'GET /logs/api/pr-flow/{identifier}'
+description: 'Get PR workflow visualization data showing processing stages and timing'
+---
+
+## Endpoint
+
+```http
+GET /logs/api/pr-flow/{identifier}
+```
+
+Analyzes log entries to visualize webhook processing stages, timing, and success/failure status for a specific webhook delivery or pull request.
+
+<Warning>
+**Security Warning**: This endpoint is NOT protected by authentication. Never expose it outside your trusted network. Deploy behind a reverse proxy with authentication, use firewall rules to restrict access, and never expose log viewer ports directly to the internet. Log data may contain GitHub tokens, user information, repository details, and sensitive webhook payloads.
+</Warning>
+
+## Path Parameters
+
+<ParamField path="identifier" type="string" required>
+  Hook ID or PR number to retrieve flow data for. Accepts multiple formats:
+  
+  - Hook ID with prefix: `hook-abc123`
+  - Hook ID without prefix: `abc123`
+  - PR number with prefix: `pr-123`
+  - PR number without prefix: `123` (interpreted as PR number if numeric)
+  
+  Examples:
+  - `/logs/api/pr-flow/hook-abc123-def456`
+  - `/logs/api/pr-flow/abc123-def456`
+  - `/logs/api/pr-flow/pr-123`
+  - `/logs/api/pr-flow/123`
+</ParamField>
+
+## Response
+
+<ResponseField name="identifier" type="string">
+  The identifier used in the request (hook ID or PR number)
+</ResponseField>
+
+<ResponseField name="stages" type="array">
+  Array of workflow stage objects in chronological order
+  
+  <Expandable title="Stage Object">
+    <ResponseField name="name" type="string">
+      Stage name (e.g., "Webhook Received", "Validation Complete", "Reviewers Assigned")
+    </ResponseField>
+    
+    <ResponseField name="timestamp" type="string">
+      ISO 8601 timestamp when stage was reached
+    </ResponseField>
+    
+    <ResponseField name="duration_ms" type="integer | null">
+      Duration from previous stage in milliseconds. `null` for the first stage.
+    </ResponseField>
+    
+    <ResponseField name="error" type="string" optional>
+      Error message if stage failed (only present if stage encountered an error)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="total_duration_ms" type="integer">
+  Total duration from first to last stage in milliseconds
+</ResponseField>
+
+<ResponseField name="success" type="boolean">
+  Whether the workflow completed successfully (`true`) or encountered errors (`false`)
+</ResponseField>
+
+<ResponseField name="error" type="string" optional>
+  Error message if workflow failed (only present when `success` is `false`)
+</ResponseField>
+
+## Workflow Stages
+
+The endpoint identifies these standard workflow stages by matching log message patterns:
+
+1. **Webhook Received** - Initial webhook processing started
+2. **Validation Complete** - Signature verification and payload validation completed
+3. **Reviewers Assigned** - OWNERS file processed and reviewers assigned
+4. **Labels Applied** - Labels and tags applied to PR
+5. **Checks Started** - Automated checks/tests/builds initiated
+6. **Checks Complete** - Checks passed successfully
+7. **Processing Complete** - Webhook processing finished
+
+<Note>
+Stages are detected using pattern matching on log messages. Not all stages may be present for every webhook, depending on the event type and configuration.
+</Note>
+
+## Examples
+
+### Get flow data by hook ID
+
+```bash
+curl "http://localhost:5000/logs/api/pr-flow/abc123-def456"
+```
+
+<CodeGroup>
+```json Response (Success)
+{
+  "identifier": "abc123-def456",
+  "stages": [
+    {
+      "name": "Webhook Received",
+      "timestamp": "2025-01-30T10:30:00.123000",
+      "duration_ms": null
+    },
+    {
+      "name": "Validation Complete",
+      "timestamp": "2025-01-30T10:30:00.245000",
+      "duration_ms": 122
+    },
+    {
+      "name": "Reviewers Assigned",
+      "timestamp": "2025-01-30T10:30:01.567000",
+      "duration_ms": 1322
+    },
+    {
+      "name": "Labels Applied",
+      "timestamp": "2025-01-30T10:30:01.890000",
+      "duration_ms": 323
+    },
+    {
+      "name": "Processing Complete",
+      "timestamp": "2025-01-30T10:30:02.123000",
+      "duration_ms": 233
+    }
+  ],
+  "total_duration_ms": 2000,
+  "success": true
+}
+```
+
+```json Response (Failure)
+{
+  "identifier": "xyz789-abc123",
+  "stages": [
+    {
+      "name": "Webhook Received",
+      "timestamp": "2025-01-30T11:15:00.000000",
+      "duration_ms": null
+    },
+    {
+      "name": "Validation Complete",
+      "timestamp": "2025-01-30T11:15:00.150000",
+      "duration_ms": 150
+    },
+    {
+      "name": "Reviewers Assigned",
+      "timestamp": "2025-01-30T11:15:01.500000",
+      "duration_ms": 1350,
+      "error": "Failed to assign reviewers: API rate limit exceeded"
+    }
+  ],
+  "total_duration_ms": 1500,
+  "success": false,
+  "error": "Failed to assign reviewers: API rate limit exceeded"
+}
+```
+</CodeGroup>
+
+### Get flow data by PR number
+
+```bash
+curl "http://localhost:5000/logs/api/pr-flow/123"
+```
+
+### Get flow data with prefixes
+
+```bash
+# Hook ID with prefix
+curl "http://localhost:5000/logs/api/pr-flow/hook-abc123"
+
+# PR number with prefix
+curl "http://localhost:5000/logs/api/pr-flow/pr-456"
+```
+
+## Error Responses
+
+<ResponseField name="404 Not Found" type="error">
+  No log data found for the specified identifier
+  
+  ```json
+  {
+    "detail": "No data found for hook_id: abc123"
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="400 Bad Request" type="error">
+  Invalid identifier format
+  
+  ```json
+  {
+    "detail": "Invalid PR flow hook_id"
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="500 Internal Server Error" type="error">
+  Internal server error during processing
+  
+  ```json
+  {
+    "detail": "Internal server error"
+  }
+  ```
+</ResponseField>
+
+## Use Cases
+
+### Workflow Visualization
+
+Display visual timeline of webhook processing:
+
+```javascript
+fetch('/logs/api/pr-flow/123')
+  .then(res => res.json())
+  .then(data => {
+    // Render timeline visualization
+    data.stages.forEach(stage => {
+      console.log(`${stage.name}: ${stage.duration_ms}ms`);
+    });
+    console.log(`Total: ${data.total_duration_ms}ms`);
+  });
+```
+
+### Performance Monitoring
+
+Identify slow stages in webhook processing:
+
+```python
+import requests
+
+response = requests.get("http://localhost:5000/logs/api/pr-flow/abc123")
+data = response.json()
+
+# Find slowest stage
+slowest = max(
+    (s for s in data["stages"] if s["duration_ms"]),
+    key=lambda s: s["duration_ms"]
+)
+
+print(f"Slowest stage: {slowest['name']} - {slowest['duration_ms']}ms")
+```
+
+### Error Detection
+
+Check for failed stages:
+
+```bash
+curl -s "http://localhost:5000/logs/api/pr-flow/123" | jq '.stages[] | select(.error)'
+```
+
+### Success Rate Tracking
+
+Monitor webhook processing success:
+
+```python
+import requests
+
+hook_ids = ["abc123", "def456", "ghi789"]
+results = []
+
+for hook_id in hook_ids:
+    response = requests.get(f"http://localhost:5000/logs/api/pr-flow/{hook_id}")
+    if response.status_code == 200:
+        data = response.json()
+        results.append(data["success"])
+
+success_rate = sum(results) / len(results) * 100
+print(f"Success rate: {success_rate:.1f}%")
+```
+
+## Performance Notes
+
+- **Memory-efficient**: Uses streaming to process logs
+- **Processing limits**:
+  - Maximum 15 most recent log files examined
+  - Maximum 10,000 entries processed per request
+- **Pattern matching**: Identifies stages using configurable regex patterns
+- **Response time**: Typically sub-second for recent webhooks
+
+## Stage Pattern Configuration
+
+The stage detection uses these patterns (defined in `LogViewerController.WORKFLOW_STAGE_PATTERNS`):
+
+```python
+[
+    ("Webhook Received", r"Processing webhook"),
+    ("Validation Complete", r"Signature verification successful|Processing webhook for"),
+    ("Reviewers Assigned", r"Added reviewer|OWNERS file|reviewer assignment"),
+    ("Labels Applied", r"label|tag"),
+    ("Checks Started", r"check|test|build"),
+    ("Checks Complete", r"check.*complete|test.*pass|build.*success"),
+    ("Processing Complete", r"completed successfully|processing complete"),
+]
+```
+
+Patterns can be updated in the source code without modifying the analysis logic.
+
+## Integration with Log Viewer UI
+
+The PR flow endpoint is used by the log viewer web interface to display:
+
+- Visual timeline of webhook processing
+- Stage-by-stage breakdown with timing
+- Error highlighting for failed stages
+- Total duration and success indicators
+- Interactive stage details on hover/click

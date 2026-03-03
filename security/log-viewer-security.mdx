@@ -1,0 +1,605 @@
+---
+title: Log Viewer Security
+description: Critical security measures for protecting unauthenticated log viewer and MCP endpoints
+---
+
+<Warning>
+  **CRITICAL SECURITY NOTICE**: The log viewer endpoints (`/logs/*`) and MCP endpoints (`/mcp/*`) are **NOT PROTECTED** by authentication or authorization. They expose potentially sensitive webhook data and should **NEVER** be exposed outside your local network or trusted environment.
+</Warning>
+
+## Data Exposure Risks
+
+The log viewer and MCP endpoints expose highly sensitive data, including:
+
+### GitHub Tokens
+- Personal access tokens (`ghp_*`, `github_pat_*`)
+- GitHub App installation tokens
+- OAuth tokens used for API access
+
+### User Information
+- GitHub usernames and user IDs
+- Email addresses from webhook payloads
+- Organization membership details
+- Committer and author information
+
+### Webhook Payloads
+- Complete webhook event data
+- Pull request titles, descriptions, and comments
+- Issue content and metadata
+- Repository names and details
+- File contents from diffs
+
+### System Information
+- Internal server configurations
+- API rate limit data
+- Processing timing and performance metrics
+- Error messages and stack traces
+- File system paths
+
+<Note>
+  Even with `mask-sensitive-data: true` enabled, logs may still contain sensitive information. **Never expose these endpoints publicly.**
+</Note>
+
+## Unauthenticated Endpoints
+
+These endpoints have **NO authentication** by design:
+
+### Log Viewer Endpoints
+
+| Endpoint | Method | Description | Data Exposed |
+|----------|--------|-------------|-------------|
+| `/logs/` | GET | Web interface | All log data via HTML/JavaScript |
+| `/logs/api/entries` | GET | Historical logs | Filtered webhook logs |
+| `/logs/api/export` | GET | Export logs | JSON export of logs |
+| `/logs/api/pr-flow/{id}` | GET | PR workflow | PR processing stages |
+| `/logs/ws` | WebSocket | Real-time logs | Live webhook events |
+
+### MCP Endpoints
+
+| Endpoint | Method | Description | Data Exposed |
+|----------|--------|-------------|-------------|
+| `/mcp/webhook_server/healthcheck` | GET | Health status | Server status |
+| `/mcp/logs/api/entries` | GET | Historical logs | Webhook logs (AI-accessible) |
+| `/mcp/logs/api/export` | GET | Export logs | JSON export |
+| `/mcp/logs/api/pr-flow/{id}` | GET | PR flow | Workflow data |
+| `/mcp/logs/api/workflow-steps/{id}` | GET | Workflow steps | Timing data |
+
+<Warning>
+  MCP endpoints duplicate log viewer functionality for AI agent access. They require the **same security measures** as log viewer endpoints.
+</Warning>
+
+## Required Security Measures
+
+### 1. Network Isolation (Recommended)
+
+**Deploy log viewer only on trusted networks:**
+
+- **Corporate VPN** - Require VPN connection for access
+- **Internal network only** - No internet exposure
+- **Localhost binding** - Bind to `127.0.0.1` for local-only access
+
+**Localhost-only configuration:**
+
+```yaml
+# config.yaml
+ip-bind: "127.0.0.1"  # Only accessible from local machine
+port: 5000
+```
+
+**Access via SSH tunnel:**
+
+```bash
+# Forward remote port 5000 to local port 5000
+ssh -L 5000:localhost:5000 user@webhook-server.example.com
+
+# Access locally
+open http://localhost:5000/logs
+```
+
+### 2. Reverse Proxy Authentication (Required for External Access)
+
+If external access is necessary, **always** deploy behind authenticated reverse proxy.
+
+#### nginx with HTTP Basic Auth
+
+**Full configuration example:**
+
+```nginx
+# /etc/nginx/sites-available/webhook-server
+server {
+    listen 443 ssl http2;
+    server_name webhook.example.com;
+
+    # SSL/TLS configuration
+    ssl_certificate /etc/letsencrypt/live/webhook.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/webhook.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    # Security headers
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    # Webhook endpoint - public access (GitHub webhooks need no auth)
+    location /webhook_server {
+        proxy_pass http://localhost:5000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Rate limiting
+        limit_req zone=webhook burst=10 nodelay;
+    }
+
+    # Health check - public access
+    location /webhook_server/healthcheck {
+        proxy_pass http://localhost:5000;
+    }
+
+    # Log viewer - REQUIRES AUTHENTICATION
+    location /logs {
+        auth_basic "Webhook Logs - Authorized Personnel Only";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+        
+        proxy_pass http://localhost:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        
+        # WebSocket support for real-time logs
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400;
+    }
+
+    # MCP endpoints - REQUIRES AUTHENTICATION
+    location /mcp {
+        auth_basic "MCP API - Authorized Personnel Only";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+        
+        proxy_pass http://localhost:5000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+
+# Redirect HTTP to HTTPS
+server {
+    listen 80;
+    server_name webhook.example.com;
+    return 301 https://$server_name$request_uri;
+}
+```
+
+**Create password file:**
+
+```bash
+# Install htpasswd utility
+sudo apt-get install apache2-utils  # Debian/Ubuntu
+sudo yum install httpd-tools         # RHEL/CentOS
+
+# Create password file with first user
+sudo htpasswd -c /etc/nginx/.htpasswd admin
+# Enter password when prompted
+
+# Add additional users (omit -c flag)
+sudo htpasswd /etc/nginx/.htpasswd developer
+
+# Secure password file
+sudo chmod 640 /etc/nginx/.htpasswd
+sudo chown root:www-data /etc/nginx/.htpasswd
+```
+
+**Enable configuration:**
+
+```bash
+# Test nginx configuration
+sudo nginx -t
+
+# Enable site
+sudo ln -s /etc/nginx/sites-available/webhook-server /etc/nginx/sites-enabled/
+
+# Reload nginx
+sudo systemctl reload nginx
+```
+
+#### Apache with HTTP Basic Auth
+
+```apache
+# /etc/apache2/sites-available/webhook-server.conf
+<VirtualHost *:443>
+    ServerName webhook.example.com
+    
+    SSLEngine on
+    SSLCertificateFile /etc/letsencrypt/live/webhook.example.com/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/webhook.example.com/privkey.pem
+    
+    # Webhook endpoint - public
+    ProxyPass /webhook_server http://localhost:5000/webhook_server
+    ProxyPassReverse /webhook_server http://localhost:5000/webhook_server
+    
+    # Log viewer - authenticated
+    <Location /logs>
+        AuthType Basic
+        AuthName "Webhook Logs"
+        AuthUserFile /etc/apache2/.htpasswd
+        Require valid-user
+        
+        ProxyPass http://localhost:5000/logs
+        ProxyPassReverse http://localhost:5000/logs
+    </Location>
+    
+    # MCP endpoints - authenticated
+    <Location /mcp>
+        AuthType Basic
+        AuthName "MCP API"
+        AuthUserFile /etc/apache2/.htpasswd
+        Require valid-user
+        
+        ProxyPass http://localhost:5000/mcp
+        ProxyPassReverse http://localhost:5000/mcp
+    </Location>
+</VirtualHost>
+```
+
+### 3. Firewall Rules
+
+Restrict access to webhook server port to specific IP ranges:
+
+#### iptables (Linux)
+
+```bash
+# Flush existing rules for port 5000
+sudo iptables -D INPUT -p tcp --dport 5000 -j ACCEPT 2>/dev/null
+
+# Allow localhost access
+sudo iptables -A INPUT -i lo -p tcp --dport 5000 -j ACCEPT
+
+# Allow from corporate network (example: 10.0.0.0/8)
+sudo iptables -A INPUT -p tcp --dport 5000 -s 10.0.0.0/8 -j ACCEPT
+
+# Allow from VPN network (example: 172.16.0.0/12)
+sudo iptables -A INPUT -p tcp --dport 5000 -s 172.16.0.0/12 -j ACCEPT
+
+# Drop all other connections to port 5000
+sudo iptables -A INPUT -p tcp --dport 5000 -j DROP
+
+# Save rules
+sudo iptables-save | sudo tee /etc/iptables/rules.v4
+```
+
+#### firewalld (RHEL/CentOS)
+
+```bash
+# Create custom zone for webhook server
+sudo firewall-cmd --permanent --new-zone=webhook
+
+# Add trusted IP ranges
+sudo firewall-cmd --permanent --zone=webhook --add-source=10.0.0.0/8
+sudo firewall-cmd --permanent --zone=webhook --add-source=172.16.0.0/12
+
+# Allow port 5000 in webhook zone
+sudo firewall-cmd --permanent --zone=webhook --add-port=5000/tcp
+
+# Reload firewall
+sudo firewall-cmd --reload
+```
+
+#### UFW (Ubuntu)
+
+```bash
+# Allow from corporate network
+sudo ufw allow from 10.0.0.0/8 to any port 5000
+
+# Allow from VPN network
+sudo ufw allow from 172.16.0.0/12 to any port 5000
+
+# Deny all other access to port 5000
+sudo ufw deny 5000
+
+# Enable firewall
+sudo ufw enable
+```
+
+### 4. VPN-Only Access (Maximum Security)
+
+Deploy webhook server accessible only via VPN.
+
+#### WireGuard VPN Example
+
+**Server configuration:**
+
+```ini
+# /etc/wireguard/wg0.conf
+[Interface]
+Address = 10.0.0.1/24
+ListenPort = 51820
+PrivateKey = <server-private-key>
+
+# Client: admin laptop
+[Peer]
+PublicKey = <client1-public-key>
+AllowedIPs = 10.0.0.2/32
+
+# Client: developer workstation
+[Peer]
+PublicKey = <client2-public-key>
+AllowedIPs = 10.0.0.3/32
+```
+
+**Bind webhook server to VPN interface:**
+
+```yaml
+# config.yaml
+ip-bind: "10.0.0.1"  # VPN interface IP
+port: 5000
+```
+
+**Firewall rules:**
+
+```bash
+# Only allow port 5000 from VPN network
+sudo iptables -A INPUT -p tcp --dport 5000 ! -s 10.0.0.0/24 -j DROP
+```
+
+#### Tailscale (Zero-Config VPN)
+
+```bash
+# Install Tailscale on webhook server
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+
+# Get Tailscale IP
+tailscale ip -4
+# Output: 100.64.0.1
+
+# Bind webhook server to Tailscale IP
+# config.yaml: ip-bind: "100.64.0.1"
+```
+
+### 5. Container Network Isolation
+
+When deploying in containers, use network isolation:
+
+```yaml
+# docker-compose.yaml
+version: "3.8"
+
+networks:
+  webhook_internal:
+    driver: bridge
+    internal: true  # No external access
+  webhook_public:
+    driver: bridge
+
+services:
+  github-webhook-server:
+    image: ghcr.io/myk-org/github-webhook-server:latest
+    networks:
+      - webhook_public   # For webhook endpoint
+      - webhook_internal # For log viewer (internal only)
+    ports:
+      - "5000:5000"  # Webhook endpoint
+    # Do NOT expose log viewer port externally
+  
+  nginx-proxy:
+    image: nginx:alpine
+    networks:
+      - webhook_internal
+      - webhook_public
+    ports:
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./htpasswd:/etc/nginx/.htpasswd:ro
+```
+
+## Environment Variables
+
+Control endpoint availability:
+
+```yaml
+# docker-compose.yaml
+environment:
+  # Disable log viewer in production (highly recommended)
+  - ENABLE_LOG_SERVER=false
+  
+  # Disable MCP server in production (highly recommended)
+  - ENABLE_MCP_SERVER=false
+```
+
+<Note>
+  Setting `ENABLE_LOG_SERVER=false` completely disables the log viewer endpoints. Use this in production environments where log access is not needed.
+</Note>
+
+## Monitoring and Auditing
+
+### Monitor Access to Log Endpoints
+
+**nginx access logs:**
+
+```bash
+# Monitor log viewer access
+sudo tail -f /var/log/nginx/access.log | grep '/logs'
+
+# Alert on unauthorized access attempts
+sudo tail -f /var/log/nginx/access.log | grep -E '/logs.*401|/logs.*403'
+```
+
+**Parse access patterns:**
+
+```bash
+# Show IP addresses accessing log viewer
+sudo awk '/\/logs/ {print $1}' /var/log/nginx/access.log | sort | uniq -c
+
+# Show most active users (HTTP Basic Auth)
+sudo awk '/\/logs/ {print $3}' /var/log/nginx/access.log | sort | uniq -c
+```
+
+### Audit Log Downloads
+
+**Track log exports:**
+
+```bash
+# Monitor export endpoint usage
+grep '/logs/api/export' webhook-server.log
+
+# Alert on large exports
+awk '/\/logs\/api\/export/ && $size > 10000000' /var/log/nginx/access.log
+```
+
+### Set Up Alerts
+
+**Example: Alert on unauthorized access:**
+
+```bash
+#!/bin/bash
+# /usr/local/bin/monitor-log-access.sh
+
+LOG_FILE="/var/log/nginx/access.log"
+ALERT_EMAIL="security@example.com"
+
+# Check for 401/403 errors on log endpoints
+UNAUTH_ACCESS=$(grep -c '/logs.*40[13]' "$LOG_FILE")
+
+if [ "$UNAUTH_ACCESS" -gt 0 ]; then
+    echo "ALERT: $UNAUTH_ACCESS unauthorized access attempts to log viewer" | \
+        mail -s "Log Viewer Security Alert" "$ALERT_EMAIL"
+fi
+```
+
+**Cron job:**
+
+```cron
+# Run every 15 minutes
+*/15 * * * * /usr/local/bin/monitor-log-access.sh
+```
+
+## Best Practices Checklist
+
+Before enabling log viewer or MCP endpoints in production:
+
+- [ ] Deploy behind reverse proxy with authentication (nginx, Apache)
+- [ ] Configure firewall rules to restrict access
+- [ ] Use VPN for remote access (WireGuard, Tailscale, OpenVPN)
+- [ ] Enable `mask-sensitive-data: true` in configuration
+- [ ] Bind to internal network interface only (`ip-bind: "10.0.0.1"`)
+- [ ] Monitor access logs for unauthorized attempts
+- [ ] Set up alerting for security events
+- [ ] Document authorized users and access procedures
+- [ ] Implement log retention and rotation policies
+- [ ] Regular security audits of access patterns
+- [ ] Use strong passwords for HTTP Basic Auth
+- [ ] Enable HTTPS/TLS for all external access
+- [ ] Consider disabling endpoints entirely (`ENABLE_LOG_SERVER=false`)
+
+## Alternative: Disable Log Viewer Entirely
+
+For maximum security, disable log viewer and use alternative log access methods:
+
+```yaml
+# docker-compose.yaml
+environment:
+  - ENABLE_LOG_SERVER=false  # Disable web-based log viewer
+  - ENABLE_MCP_SERVER=false  # Disable MCP endpoints
+```
+
+**Access logs via:**
+
+1. **SSH access to server:**
+   ```bash
+   ssh user@webhook-server
+   cat /path/to/logs/webhooks_*.json | jq .
+   ```
+
+2. **Docker logs:**
+   ```bash
+   docker logs github-webhook-server
+   ```
+
+3. **Log aggregation platform:**
+   - Forward logs to ELK Stack (Elasticsearch, Logstash, Kibana)
+   - Use Splunk or Datadog for log analysis
+   - Configure Grafana Loki for log aggregation
+
+4. **File-based access with SCP:**
+   ```bash
+   scp user@webhook-server:/path/to/logs/webhooks_2025-03-03.json ./
+   ```
+
+## Security Incident Response
+
+If unauthorized access is detected:
+
+1. **Immediately disable log viewer:**
+   ```bash
+   docker exec github-webhook-server kill -USR1 1  # Reload config
+   # Or restart with ENABLE_LOG_SERVER=false
+   ```
+
+2. **Review access logs:**
+   ```bash
+   grep '/logs' /var/log/nginx/access.log | tail -100
+   ```
+
+3. **Rotate sensitive credentials:**
+   - Change HTTP Basic Auth passwords
+   - Rotate GitHub tokens if exposed
+   - Update webhook secrets
+
+4. **Audit log data:**
+   ```bash
+   # Check what data was accessed
+   grep '/logs/api/export' /var/log/nginx/access.log
+   ```
+
+5. **Update firewall rules:**
+   ```bash
+   # Block unauthorized IPs
+   sudo iptables -A INPUT -s <unauthorized-ip> -j DROP
+   ```
+
+6. **Document incident:**
+   - Time of access
+   - Source IP addresses
+   - Data potentially exposed
+   - Remediation steps taken
+
+## Compliance Considerations
+
+### GDPR (General Data Protection Regulation)
+
+- **Data minimization**: Only log necessary webhook data
+- **Access control**: Implement authentication and authorization
+- **Data retention**: Implement log rotation (30-90 days)
+- **Right to erasure**: Ability to delete specific webhook logs
+
+### SOC 2 (Service Organization Control)
+
+- **Access monitoring**: Log all log viewer access
+- **Authentication**: HTTP Basic Auth or stronger
+- **Encryption**: TLS/SSL for all external access
+- **Audit trail**: Comprehensive access logging
+
+### HIPAA (Healthcare)
+
+- **Physical safeguards**: VPN-only access
+- **Technical safeguards**: Encryption, authentication
+- **Audit controls**: Access logging and monitoring
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Security Overview" icon="shield" href="/security/overview">
+    Comprehensive security architecture and best practices
+  </Card>
+  <Card title="Webhook Verification" icon="shield-check" href="/security/webhook-verification">
+    IP allowlisting and HMAC signature verification
+  </Card>
+</CardGroup>

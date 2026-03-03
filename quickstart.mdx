@@ -1,80 +1,318 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Get GitHub Webhook Server running in under 5 minutes
 ---
 
-## Get started in three steps
+# Quick Start Guide
 
-Get your documentation site running locally and make your first customization.
-
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+Get your GitHub Webhook Server up and running in minutes. This guide will walk you through the essential steps to deploy and test your webhook server.
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  This quickstart uses container deployment (recommended). For other installation methods, see [Installation](/installation).
 </Note>
+
+## Prerequisites Check
+
+Before starting, ensure you have:
+
+- Container runtime (Podman or Docker) installed
+- GitHub Personal Access Token with admin rights to your repositories
+- GitHub App created (or use PAT for initial testing)
+- Public URL for webhook delivery (or use [smee.io](https://smee.io) for testing)
+
+## Step-by-Step Setup
+
+<Steps>
+  <Step title="Pull the Container Image">
+    Pull the latest stable release from GitHub Container Registry:
+
+    <CodeGroup>
+    ```bash Podman
+    podman pull ghcr.io/myk-org/github-webhook-server:latest
+    ```
+
+    ```bash Docker
+    docker pull ghcr.io/myk-org/github-webhook-server:latest
+    ```
+    </CodeGroup>
+
+    <Tip>
+      For development, you can use `smee.io` as a webhook proxy to route GitHub webhooks to your local machine.
+    </Tip>
+  </Step>
+
+  <Step title="Create Data Directory and Configuration">
+    Create a directory for your configuration and logs:
+
+    ```bash
+    mkdir -p ~/webhook_server_data/logs
+    cd ~/webhook_server_data
+    ```
+
+    Create `config.yaml` with minimal configuration:
+
+    ```yaml config.yaml
+    # yaml-language-server: $schema=https://raw.githubusercontent.com/myk-org/github-webhook-server/refs/heads/main/webhook_server/config/schema.yaml
+
+    github-app-id: 123456  # Your GitHub App ID
+    webhook-ip: https://your-domain.com/webhook_server  # Full URL with path
+    # For local testing: https://smee.io/your-channel
+
+    github-tokens:
+      - ghp_your_github_token_here
+
+    repositories:
+      my-repository:
+        name: my-org/my-repository
+        protected-branches:
+          main: []
+    ```
+
+    <Info>
+      Replace `github-app-id`, `webhook-ip`, and `github-tokens` with your actual values. The schema URL enables IDE autocompletion.
+    </Info>
+  </Step>
+
+  <Step title="Start the Webhook Server">
+    Run the container with your configuration:
+
+    <CodeGroup>
+    ```bash Podman
+    podman run -d \
+      --name github-webhook-server \
+      -p 5000:5000 \
+      -v ~/webhook_server_data:/home/podman/data:Z \
+      -e WEBHOOK_SECRET=your-webhook-secret \
+      -e VERIFY_GITHUB_IPS=1 \
+      ghcr.io/myk-org/github-webhook-server:latest
+    ```
+
+    ```bash Docker
+    docker run -d \
+      --name github-webhook-server \
+      -p 5000:5000 \
+      -v ~/webhook_server_data:/home/podman/data:Z \
+      -e WEBHOOK_SECRET=your-webhook-secret \
+      -e VERIFY_GITHUB_IPS=1 \
+      ghcr.io/myk-org/github-webhook-server:latest
+    ```
+    </CodeGroup>
+
+    Verify the server is running:
+
+    ```bash
+    curl http://localhost:5000/webhook_server/healthcheck
+    ```
+
+    Expected response:
+    ```json
+    {
+      "status": 200,
+      "message": "Alive"
+    }
+    ```
+  </Step>
+
+  <Step title="Configure GitHub Webhook">
+    Set up the webhook in your GitHub repository:
+
+    1. Navigate to your repository settings on GitHub
+    2. Click **Webhooks** → **Add webhook**
+    3. Configure the webhook:
+       - **Payload URL**: `https://your-domain.com/webhook_server`
+       - **Content type**: `application/json`
+       - **Secret**: Your webhook secret (same as `WEBHOOK_SECRET` env var)
+       - **Events**: Select "Send me everything" or choose specific events:
+         - Pull requests
+         - Issue comments
+         - Push
+         - Pull request reviews
+         - Check runs
+    4. Click **Add webhook**
+
+    <Warning>
+      For production, always use HTTPS and configure `WEBHOOK_SECRET` for signature verification.
+    </Warning>
+  </Step>
+
+  <Step title="Test Webhook Delivery">
+    Create a test pull request to verify webhook processing:
+
+    ```bash
+    # In your repository
+    git checkout -b test-webhook
+    echo "Test webhook" > test.txt
+    git add test.txt
+    git commit -m "test: verify webhook integration"
+    git push origin test-webhook
+    ```
+
+    Create a pull request on GitHub, then check the logs:
+
+    ```bash
+    # View container logs
+    podman logs -f github-webhook-server
+    # or
+    docker logs -f github-webhook-server
+
+    # View webhook processing logs
+    tail -f ~/webhook_server_data/logs/webhooks_*.json
+    ```
+
+    You should see:
+    - Webhook received and queued for processing
+    - PR labels added (size label, branch label)
+    - Reviewer assignment (if OWNERS file exists)
+    - Check runs created
+  </Step>
+
+  <Step title="Try Interactive Commands">
+    Test the webhook server by commenting on your pull request:
+
+    ```bash
+    # In the PR comments, try these commands:
+    /verified
+    ```
+
+    The server should:
+    - Add a `verified` label to the PR
+    - Update the can-be-merged check status
+    - Respond with a confirmation comment
+
+    <Tip>
+      See all available commands in the [User Commands](#user-commands) section.
+    </Tip>
+  </Step>
+</Steps>
+
+## Verify Installation
+
+### Check Server Health
+
+```bash
+curl http://localhost:5000/webhook_server/healthcheck
+```
+
+### View Recent Webhooks
+
+If log viewer is enabled (`ENABLE_LOG_SERVER=true`):
+
+```bash
+curl "http://localhost:5000/logs/api/entries?limit=10"
+```
+
+### Test Webhook Delivery
+
+In GitHub repository settings:
+1. Go to **Webhooks**
+2. Click on your webhook
+3. Scroll to **Recent Deliveries**
+4. Click **Redeliver** on any delivery to test
+
+## User Commands
+
+Interact with pull requests through comment-based commands:
+
+| Command | Description | Example |
+|---------|-------------|----------|
+| `/verified` | Mark PR as verified | `/verified` |
+| `/verified cancel` | Remove verification | `/verified cancel` |
+| `/approve` | Approve PR | `/approve` |
+| `/hold` | Block PR merging | `/hold` |
+| `/hold cancel` | Unblock PR merging | `/hold cancel` |
+| `/retest all` | Run all configured tests | `/retest all` |
+| `/cherry-pick branch1 branch2` | Cherry-pick to branches | `/cherry-pick v1.0 v2.0` |
+| `/test-oracle` | Request AI test recommendations | `/test-oracle` |
+
+<Info>
+  Commands are processed in real-time as you comment on pull requests. Check the webhook logs to see processing status.
+</Info>
+
+## Common Configuration
+
+### Enable Pre-commit Checks
+
+```yaml config.yaml
+repositories:
+  my-repository:
+    name: my-org/my-repository
+    pre-commit: true  # Run pre-commit on PRs
+    protected-branches:
+      main: []
+```
+
+### Configure Tox Testing
+
+```yaml config.yaml
+repositories:
+  my-repository:
+    name: my-org/my-repository
+    tox:
+      main: all              # Run all tests for main branch PRs
+      develop: unit,integration  # Run specific envs for develop
+    tox-python-version: "3.12"
+    protected-branches:
+      main: []
+```
+
+### Set Minimum Approvals
+
+```yaml config.yaml
+repositories:
+  my-repository:
+    name: my-org/my-repository
+    minimum-lgtm: 2  # Require 2 approvals
+    conventional-title: "feat,fix,docs,refactor,test"
+    protected-branches:
+      main: []
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Explore advanced configuration options for automation, CI/CD, and security
+  </Card>
+  <Card title="OWNERS Files" icon="users" href="/concepts/owners-files">
+    Set up OWNERS files for intelligent reviewer assignment
+  </Card>
+  <Card title="User Commands" icon="terminal" href="/features/user-commands">
+    Learn all available commands for PR and repository management
+  </Card>
+  <Card title="Deployment" icon="cloud" href="/deployment/docker">
+    Production deployment with Docker Compose, Kubernetes, or Systemd
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Webhook Not Received
+
+1. Check GitHub webhook delivery status in repository settings
+2. Verify firewall allows incoming connections on port 5000
+3. Ensure `webhook-ip` in config matches GitHub webhook URL
+4. Check container logs: `podman logs github-webhook-server`
+
+### Commands Not Working
+
+1. Verify user is in repository collaborators or OWNERS file
+2. Check if PR is in draft state (most commands blocked on drafts)
+3. Review webhook logs for error messages
+4. Ensure GitHub token has required permissions
+
+### Health Check Fails
+
+```bash
+# Check container is running
+podman ps | grep github-webhook-server
+
+# View container logs
+podman logs --tail 50 github-webhook-server
+
+# Check port binding
+ss -tlnp | grep 5000
+```
+
+<Warning>
+  For production deployments, see [Security Best Practices](/security) to configure IP allowlisting, signature verification, and authentication.
+</Warning>

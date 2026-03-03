@@ -1,0 +1,439 @@
+---
+title: Installation
+description: Install GitHub Webhook Server using containers, from source, or for local development
+---
+
+# Installation
+
+GitHub Webhook Server can be deployed using pre-built containers (recommended), built from source, or run locally for development. Choose the method that best fits your environment.
+
+## Prerequisites
+
+<Info>
+  **Python 3.12+** is required for all installation methods. Python 3.13 is recommended for optimal performance.
+</Info>
+
+Before installing, ensure you have:
+
+- **Python 3.12+** (3.13 recommended)
+- **GitHub App** with appropriate permissions, or **GitHub Personal Access Tokens** with admin rights
+- **Container runtime** (Podman/Docker) for containerized deployment
+- **Network access** to GitHub API and webhook endpoints
+
+### GitHub App Permissions
+
+Your GitHub App requires the following permissions:
+
+**Repository permissions:**
+- `Contents`: Read & Write
+- `Issues`: Read & Write
+- `Pull requests`: Read & Write
+- `Checks`: Read & Write
+- `Metadata`: Read
+- `Administration`: Read & Write (for branch protection)
+
+**Organization permissions:**
+- `Members`: Read (for OWNERS validation)
+
+**Events:**
+- `Push`, `Pull request`, `Issue comment`, `Check run`, `Pull request review`
+
+## Container Installation (Recommended)
+
+The easiest way to deploy GitHub Webhook Server is using the pre-built container image from GitHub Container Registry.
+
+### Pull Pre-built Image
+
+<CodeGroup>
+```bash Podman
+podman pull ghcr.io/myk-org/github-webhook-server:latest
+```
+
+```bash Docker
+docker pull ghcr.io/myk-org/github-webhook-server:latest
+```
+</CodeGroup>
+
+### Run Container
+
+<Steps>
+  <Step title="Create Data Directory">
+    ```bash
+    mkdir -p ~/webhook_server_data/logs
+    ```
+  </Step>
+
+  <Step title="Create Configuration">
+    Create `~/webhook_server_data/config.yaml`:
+
+    ```yaml config.yaml
+    # yaml-language-server: $schema=https://raw.githubusercontent.com/myk-org/github-webhook-server/refs/heads/main/webhook_server/config/schema.yaml
+
+    github-app-id: 123456
+    webhook-ip: https://your-domain.com/webhook_server
+    github-tokens:
+      - ghp_your_token_here
+
+    repositories:
+      my-repository:
+        name: my-org/my-repository
+        protected-branches:
+          main: []
+    ```
+  </Step>
+
+  <Step title="Start Container">
+    <CodeGroup>
+    ```bash Podman
+    podman run -d \
+      --name github-webhook-server \
+      -p 5000:5000 \
+      -v ~/webhook_server_data:/home/podman/data:Z \
+      -e WEBHOOK_SECRET=your-webhook-secret \
+      -e VERIFY_GITHUB_IPS=1 \
+      -e VERIFY_CLOUDFLARE_IPS=1 \
+      --privileged \
+      ghcr.io/myk-org/github-webhook-server:latest
+    ```
+
+    ```bash Docker
+    docker run -d \
+      --name github-webhook-server \
+      -p 5000:5000 \
+      -v ~/webhook_server_data:/home/podman/data:Z \
+      -e WEBHOOK_SECRET=your-webhook-secret \
+      -e VERIFY_GITHUB_IPS=1 \
+      -e VERIFY_CLOUDFLARE_IPS=1 \
+      --privileged \
+      ghcr.io/myk-org/github-webhook-server:latest
+    ```
+    </CodeGroup>
+
+    <Note>
+      The `--privileged` flag is required for container building features. Omit if you don't need to build containers within the webhook server.
+    </Note>
+  </Step>
+</Steps>
+
+### Using Docker Compose
+
+For production deployments, Docker Compose provides better management:
+
+```yaml docker-compose.yaml
+services:
+  github-webhook-server:
+    image: ghcr.io/myk-org/github-webhook-server:latest
+    container_name: github-webhook-server
+    ports:
+      - "5000:5000"
+    volumes:
+      - "./webhook_server_data:/home/podman/data:Z"
+    environment:
+      - WEBHOOK_SERVER_DATA_DIR=/home/podman/data
+      - WEBHOOK_SECRET=your-webhook-secret
+      - VERIFY_GITHUB_IPS=1
+      - VERIFY_CLOUDFLARE_IPS=1
+      - MAX_WORKERS=50
+      - ENABLE_LOG_SERVER=true
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "--fail",
+          "http://localhost:5000/webhook_server/healthcheck",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    privileged: true
+```
+
+Start the service:
+
+```bash
+docker compose up -d
+```
+
+## Building from Source
+
+Build your own container image from source for customization or development.
+
+<Steps>
+  <Step title="Clone Repository">
+    ```bash
+    git clone https://github.com/myakove/github-webhook-server.git
+    cd github-webhook-server
+    ```
+  </Step>
+
+  <Step title="Build Container Image">
+    <CodeGroup>
+    ```bash Podman
+    podman build --format docker -t github-webhook-server .
+    ```
+
+    ```bash Docker
+    docker build -t github-webhook-server .
+    ```
+    </CodeGroup>
+
+    The Dockerfile includes:
+    - Python 3.10-3.13 support
+    - UV package manager
+    - Pre-commit, Poetry, Prek, Tox
+    - AI CLI tools (Claude Code, Cursor Agent, Gemini CLI)
+    - Container building tools (Podman, hub, regctl)
+  </Step>
+
+  <Step title="Run Built Image">
+    ```bash
+    podman run -d \
+      --name github-webhook-server \
+      -p 5000:5000 \
+      -v ~/webhook_server_data:/home/podman/data:Z \
+      -e WEBHOOK_SECRET=your-secret \
+      github-webhook-server:latest
+    ```
+  </Step>
+</Steps>
+
+## Local Development Setup
+
+For development and testing, run the webhook server directly from source.
+
+<Steps>
+  <Step title="Clone Repository">
+    ```bash
+    git clone https://github.com/myakove/github-webhook-server.git
+    cd github-webhook-server
+    ```
+  </Step>
+
+  <Step title="Install UV Package Manager">
+    UV is the recommended package manager for fast dependency installation:
+
+    ```bash
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    ```
+  </Step>
+
+  <Step title="Install Dependencies">
+    <CodeGroup>
+    ```bash UV (Recommended)
+    uv sync
+    ```
+
+    ```bash Pip
+    pip install -e .
+    ```
+    </CodeGroup>
+
+    <Tip>
+      UV is significantly faster than pip and provides better dependency resolution.
+    </Tip>
+  </Step>
+
+  <Step title="Configure Development Environment">
+    Create `data/config.yaml` in the repository root:
+
+    ```yaml data/config.yaml
+    # yaml-language-server: $schema=https://raw.githubusercontent.com/myk-org/github-webhook-server/refs/heads/main/webhook_server/config/schema.yaml
+
+    github-app-id: 123456
+    webhook-ip: https://smee.io/your-channel  # Use smee.io for local testing
+    github-tokens:
+      - ghp_your_token_here
+
+    log-level: DEBUG  # Enable debug logging for development
+
+    repositories:
+      test-repo:
+        name: your-org/test-repo
+        protected-branches:
+          main: []
+    ```
+
+    Set environment variables:
+
+    ```bash
+    export WEBHOOK_SERVER_DATA_DIR=$(pwd)/data
+    export WEBHOOK_SERVER_PORT=5000
+    ```
+  </Step>
+
+  <Step title="Run Development Server">
+    ```bash
+    uv run entrypoint.py
+    ```
+
+    The server will start on `http://localhost:5000`. You should see:
+
+    ```
+    INFO:     Started server process
+    INFO:     Waiting for application startup.
+    INFO:     Application startup complete.
+    INFO:     Uvicorn running on http://0.0.0.0:5000
+    ```
+  </Step>
+</Steps>
+
+### Development Tools
+
+Install development tools for code quality:
+
+```bash
+# Install pre-commit hooks
+uv run pre-commit install
+
+# Run tests
+uv run --group tests pytest -n auto
+
+# Run tests with coverage
+uv run --group tests pytest -n auto --cov=webhook_server
+
+# Code formatting and linting
+uv run ruff format
+uv run ruff check
+uv run ruff check --fix
+
+# Type checking
+uv run mypy webhook_server/
+```
+
+## Environment Variables
+
+Configure the webhook server using environment variables:
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `WEBHOOK_SERVER_DATA_DIR` | Directory containing config.yaml | `/home/podman/data` | Yes |
+| `WEBHOOK_SERVER_IP_BIND` | IP address to bind server | `0.0.0.0` | No |
+| `WEBHOOK_SERVER_PORT` | Port to bind server | `5000` | No |
+| `MAX_WORKERS` | Maximum number of workers | `10` | No |
+| `WEBHOOK_SECRET` | GitHub webhook secret | - | Recommended |
+| `VERIFY_GITHUB_IPS` | Verify GitHub IP addresses | `false` | No |
+| `VERIFY_CLOUDFLARE_IPS` | Verify Cloudflare IP addresses | `false` | No |
+| `ENABLE_LOG_SERVER` | Enable log viewer endpoints | `false` | No |
+| `ENABLE_MCP_SERVER` | Enable MCP server endpoints | `false` | No |
+
+### AI CLI API Keys
+
+For AI-powered features (test-oracle, conventional title suggestions):
+
+| Variable | Description | Provider |
+|----------|-------------|----------|
+| `ANTHROPIC_API_KEY` | API key for Claude Code CLI | Claude |
+| `GEMINI_API_KEY` | API key for Gemini CLI | Gemini |
+| `CURSOR_API_KEY` | API key for Cursor Agent CLI | Cursor |
+
+<Note>
+  **Cursor Interactive Login**: For Cursor Agent, you can also use interactive login:
+  ```bash
+  docker exec -it github-webhook-server agent
+  ```
+  This provides a login link instead of requiring an API key.
+</Note>
+
+## Verify Installation
+
+### Health Check
+
+Test the webhook server is running:
+
+```bash
+curl http://localhost:5000/webhook_server/healthcheck
+```
+
+Expected response:
+```json
+{
+  "status": 200,
+  "message": "Alive"
+}
+```
+
+### Configuration Validation
+
+Validate your configuration file:
+
+```bash
+# From source directory
+uv run webhook_server/tests/test_schema_validator.py ~/webhook_server_data/config.yaml
+```
+
+### Container Health
+
+Check container health status:
+
+```bash
+# Podman
+podman healthcheck run github-webhook-server
+
+# Docker
+docker inspect --format='{{.State.Health.Status}}' github-webhook-server
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Configure repositories, automation workflows, and security settings
+  </Card>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Follow the quickstart guide to set up your first webhook
+  </Card>
+  <Card title="Deployment" icon="cloud" href="/deployment/docker">
+    Production deployment with Kubernetes or Systemd
+  </Card>
+  <Card title="Development" icon="code" href="/advanced/contributing">
+    Contributing guide and development workflow
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Container Won't Start
+
+```bash
+# Check container logs
+podman logs github-webhook-server
+
+# Verify port is available
+ss -tlnp | grep 5000
+
+# Check file permissions
+ls -la ~/webhook_server_data/
+```
+
+### Python Version Issues
+
+```bash
+# Check Python version
+python3 --version
+
+# Install specific Python version (Ubuntu/Debian)
+sudo apt install python3.13 python3.13-dev
+
+# Install UV with specific Python
+UV_PYTHON=python3.13 uv sync
+```
+
+### Dependency Installation Fails
+
+```bash
+# Clear UV cache
+rm -rf .cache
+
+# Reinstall dependencies
+uv sync --reinstall
+
+# Use pip as fallback
+pip install -e .
+```
+
+<Warning>
+  For production deployments, always use containers for isolation and security. Local development setup is intended for testing and development only.
+</Warning>

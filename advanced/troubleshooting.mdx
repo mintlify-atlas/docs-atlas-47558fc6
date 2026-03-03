@@ -1,0 +1,513 @@
+---
+title: Troubleshooting
+description: Debug common issues and resolve webhook server errors
+---
+
+## Common Issues
+
+### Webhook Not Received
+
+**Symptoms:** GitHub sends webhooks but server doesn't process them.
+
+**Diagnosis:**
+
+```bash
+# Check server logs
+tail -f webhook-server.log
+
+# Verify server is running
+curl http://localhost:5000/webhook_server/healthcheck
+
+# Check webhook deliveries in GitHub
+# Repository Settings → Webhooks → Recent Deliveries
+```
+
+**Solutions:**
+
+1. **Verify webhook URL configuration:**
+
+   ```yaml
+   webhook-ip: https://your-domain.com/webhook_server
+   ```
+
+2. **Check firewall rules:**
+
+   ```bash
+   # Ensure port 5000 is accessible
+   netstat -tulpn | grep 5000
+   ```
+
+3. **Verify IP allowlist (if enabled):**
+
+   ```yaml
+   verify-github-ips: false  # Temporarily disable for testing
+   verify-cloudflare-ips: false
+   ```
+
+4. **Check webhook secret:**
+
+   ```yaml
+   webhook-secret: "your-webhook-secret"
+   ```
+
+   Verify it matches the secret configured in GitHub webhook settings.
+
+### Configuration Errors
+
+**Symptoms:** Server fails to start or repository not found errors.
+
+**Diagnosis:**
+
+```bash
+# Validate configuration file
+uv run webhook_server/tests/test_schema_validator.py config.yaml
+
+# Check for YAML syntax errors
+python3 -c "import yaml; yaml.safe_load(open('config.yaml'))"
+```
+
+**Common Issues:**
+
+1. **Invalid YAML syntax:**
+
+   ```yaml
+   # ❌ WRONG - Missing quotes
+   webhook-secret: my-secret-with-special-chars!
+
+   # ✅ CORRECT
+   webhook-secret: "my-secret-with-special-chars!"
+   ```
+
+2. **Repository not in config:**
+
+   ```yaml
+   # Ensure repository is defined
+   repositories:
+     my-project:  # Repository key
+       name: my-org/my-repository  # Full repository name
+       protected-branches:
+         main: []
+   ```
+
+3. **Missing required fields:**
+
+   ```yaml
+   # Required fields
+   github-app-id: 123456
+   webhook-ip: https://your-domain.com/webhook_server
+   github-tokens:
+     - ghp_your_github_token
+   ```
+
+**Validation Commands:**
+
+```bash
+# Run configuration schema tests
+uv run pytest webhook_server/tests/test_config_schema.py -v
+
+# Test with example configuration
+uv run webhook_server/tests/test_schema_validator.py examples/config.yaml
+```
+
+### GitHub API Errors
+
+**Symptoms:** Rate limit errors, authentication failures, or API timeouts.
+
+**Rate Limit Exceeded:**
+
+```bash
+# Check current rate limit
+curl -H "Authorization: token ghp_YOUR_TOKEN" \
+  https://api.github.com/rate_limit
+```
+
+**Solutions:**
+
+1. **Use multiple tokens:**
+
+   ```yaml
+   github-tokens:
+     - ghp_token_1
+     - ghp_token_2
+     - ghp_token_3
+   ```
+
+2. **Check token permissions:**
+
+   Required scopes:
+   - `repo` (full repository access)
+   - `admin:org` → `read:org` (for OWNERS validation)
+   - `admin:repo_hook` (for webhook management)
+
+3. **Verify token validity:**
+
+   ```bash
+   curl -H "Authorization: token ghp_YOUR_TOKEN" \
+     https://api.github.com/user
+   ```
+
+**Authentication Failures:**
+
+```bash
+# Test GitHub App credentials
+curl -H "Authorization: Bearer $(cat /path/to/github-app-private-key.pem)" \
+  https://api.github.com/app
+```
+
+### Performance Issues
+
+**Symptoms:** Slow webhook processing or timeouts.
+
+**Diagnosis:**
+
+```bash
+# Check processing times in structured logs
+jq 'select(.timing.duration_ms > 5000) | {hook_id, duration_ms: .timing.duration_ms, steps: .workflow_steps}' \
+  logs/webhooks_$(date +%Y-%m-%d).json
+
+# Identify slow workflow steps
+jq -s 'map(.workflow_steps | to_entries[] | {step: .key, duration: .value.duration_ms}) | group_by(.step) | map({step: .[0].step, avg_ms: (map(.duration) | add / length)})' \
+  logs/webhooks_$(date +%Y-%m-%d).json
+```
+
+**Common Bottlenecks:**
+
+1. **Repository Cloning:**
+
+   - Large repositories take longer to clone
+   - Network latency affects clone times
+   - Consider shallow clones for faster processing
+
+2. **GitHub API Calls:**
+
+   - Excessive API calls slow down processing
+   - Check `token_spend` in logs
+   - Optimize by using pre-fetched repository data
+
+3. **Resource Constraints:**
+
+   ```bash
+   # Check container resource limits
+   docker stats github-webhook-server
+
+   # Monitor system resources
+   top -p $(pgrep -f entrypoint.py)
+   ```
+
+**Solutions:**
+
+1. **Increase worker count:**
+
+   ```yaml
+   max-workers: 20  # Default: 10
+   ```
+
+2. **Optimize configuration:**
+
+   ```yaml
+   # Disable unnecessary features for faster processing
+   repositories:
+     my-project:
+       verified-job: false  # If not needed
+       pre-commit: false    # If not needed
+   ```
+
+3. **Use repository-level overrides:**
+
+   Create `.github-webhook-server.yaml` in repository to reduce config loading time.
+
+## WebSocket Connection Issues
+
+**Symptoms:** Log viewer doesn't show real-time updates.
+
+**Diagnosis:**
+
+```bash
+# Test WebSocket connection
+wscat -c ws://localhost:5000/logs/ws
+
+# Check browser console for errors
+# Open Developer Tools → Console
+```
+
+**Solutions:**
+
+1. **Enable log server:**
+
+   ```bash
+   export ENABLE_LOG_SERVER=true
+   ```
+
+2. **Check reverse proxy configuration:**
+
+   ```nginx
+   # Nginx WebSocket proxy configuration
+   location /logs/ws {
+       proxy_pass http://webhook-server:5000;
+       proxy_http_version 1.1;
+       proxy_set_header Upgrade $http_upgrade;
+       proxy_set_header Connection "upgrade";
+       proxy_set_header Host $host;
+   }
+   ```
+
+3. **Verify firewall allows WebSocket traffic:**
+
+   ```bash
+   # Test WebSocket upgrade
+   curl -i -N \
+     -H "Connection: Upgrade" \
+     -H "Upgrade: websocket" \
+     -H "Sec-WebSocket-Version: 13" \
+     -H "Sec-WebSocket-Key: test" \
+     http://localhost:5000/logs/ws
+   ```
+
+## Missing Log Data
+
+**Symptoms:** Logs are empty or incomplete.
+
+**Diagnosis:**
+
+```bash
+# Check log file permissions
+ls -la $WEBHOOK_SERVER_DATA_DIR/logs/
+
+# Verify log directory exists
+if [ ! -d "$WEBHOOK_SERVER_DATA_DIR/logs" ]; then
+  echo "Log directory missing!"
+fi
+
+# Check disk space
+df -h $WEBHOOK_SERVER_DATA_DIR
+```
+
+**Solutions:**
+
+1. **Create log directory:**
+
+   ```bash
+   mkdir -p $WEBHOOK_SERVER_DATA_DIR/logs
+   chmod 755 $WEBHOOK_SERVER_DATA_DIR/logs
+   ```
+
+2. **Fix permissions:**
+
+   ```bash
+   # For container deployment
+   chown -R 1000:1000 $WEBHOOK_SERVER_DATA_DIR/logs
+
+   # For local deployment
+   chown -R $USER:$USER $WEBHOOK_SERVER_DATA_DIR/logs
+   ```
+
+3. **Check log rotation:**
+
+   ```bash
+   # Verify logs are being written
+   ls -lht $WEBHOOK_SERVER_DATA_DIR/logs/ | head
+
+   # Check for log rotation issues
+   tail -f webhook-server.log | grep -i "rotation\|error"
+   ```
+
+4. **Verify log level configuration:**
+
+   ```yaml
+   log-level: DEBUG  # Use DEBUG for maximum verbosity
+   ```
+
+## Debug Commands
+
+### Server Debugging
+
+**Enable Debug Logging:**
+
+```yaml
+# config.yaml
+log-level: DEBUG
+
+repositories:
+  my-project:
+    log-level: DEBUG
+```
+
+**Test Server Startup:**
+
+```bash
+# Run server in foreground with debug output
+WEBHOOK_SERVER_DATA_DIR=/path/to/data uv run entrypoint.py
+
+# Check for startup errors
+grep -i "error\|exception" webhook-server.log | tail -20
+```
+
+### Configuration Testing
+
+**Validate Schema:**
+
+```bash
+# Validate main configuration
+uv run webhook_server/tests/test_schema_validator.py config.yaml
+
+# Validate repository override
+uv run webhook_server/tests/test_schema_validator.py .github-webhook-server.yaml
+
+# Run full schema test suite
+uv run pytest webhook_server/tests/test_config_schema.py -v
+```
+
+**Test Configuration Loading:**
+
+```bash
+# Python interactive test
+uv run python3 -c "
+import yaml
+from webhook_server.libs.config import Config
+
+config = Config(repository='my-org/my-repo')
+print(f'Log level: {config.get_value(\"log-level\")}')
+print(f'Protected branches: {config.get_value(\"protected-branches\")}')
+"
+```
+
+### Webhook Testing
+
+**Simulate Webhook Events:**
+
+```bash
+# Send test webhook (requires valid payload)
+curl -X POST http://localhost:5000/webhook_server \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: pull_request" \
+  -H "X-GitHub-Delivery: test-delivery-123" \
+  -H "X-Hub-Signature-256: sha256=YOUR_SIGNATURE" \
+  -d @test-payload.json
+```
+
+**Check Webhook Queue:**
+
+```bash
+# Monitor active webhook processing
+grep "Webhook queued" webhook-server.log | tail -10
+grep "Processing webhook" webhook-server.log | tail -10
+```
+
+### API Testing
+
+**Test GitHub API Access:**
+
+```python
+# Test PyGithub connection
+import asyncio
+from github import Github
+
+async def test_api():
+    g = Github("ghp_YOUR_TOKEN")
+    user = await asyncio.to_thread(g.get_user)
+    print(f"Authenticated as: {user.login}")
+    
+    rate_limit = await asyncio.to_thread(g.get_rate_limit)
+    print(f"Rate limit: {rate_limit.core.remaining}/{rate_limit.core.limit}")
+
+asyncio.run(test_api())
+```
+
+**Check Repository Access:**
+
+```bash
+curl -H "Authorization: token ghp_YOUR_TOKEN" \
+  https://api.github.com/repos/my-org/my-repository
+```
+
+### Log Analysis
+
+**Find Recent Errors:**
+
+```bash
+# Standard logs
+grep -i error webhook-server.log | tail -20
+
+# Structured webhook logs
+jq 'select(.success == false)' logs/webhooks_$(date +%Y-%m-%d).json | tail -5
+```
+
+**Trace Specific Webhook:**
+
+```bash
+# Using hook_id from GitHub webhook delivery
+jq 'select(.hook_id == "abc123-def456")' logs/webhooks_*.json
+
+# Follow PR processing
+jq 'select(.pr.number == 123)' logs/webhooks_*.json
+```
+
+**Check for Performance Issues:**
+
+```bash
+# Find slowest webhooks
+jq -s 'sort_by(.timing.duration_ms) | reverse | .[0:10] | map({hook_id, duration_ms: .timing.duration_ms, event_type})' \
+  logs/webhooks_*.json
+
+# Find failing workflow steps
+jq -s 'map(.workflow_steps | to_entries[] | select(.value.status == "failed") | {step: .key, error: .value.error.message})' \
+  logs/webhooks_*.json
+```
+
+## Container Debugging
+
+**Docker/Podman Debugging:**
+
+```bash
+# Check container logs
+docker logs github-webhook-server --tail 100 --follow
+
+# Access container shell
+docker exec -it github-webhook-server /bin/bash
+
+# Check container environment
+docker exec github-webhook-server env | grep WEBHOOK
+
+# Verify configuration mount
+docker exec github-webhook-server ls -la /home/podman/data
+
+# Test health check inside container
+docker exec github-webhook-server curl http://localhost:5000/webhook_server/healthcheck
+```
+
+**Resource Constraints:**
+
+```bash
+# Check container resource usage
+docker stats github-webhook-server
+
+# Inspect container configuration
+docker inspect github-webhook-server | jq '.[0].HostConfig.Memory'
+
+# View container restart history
+docker inspect github-webhook-server | jq '.[0].State'
+```
+
+## Getting Help
+
+If you encounter issues not covered here:
+
+1. **Check structured logs** for detailed error messages
+2. **Enable DEBUG logging** for maximum verbosity
+3. **Search existing issues** on [GitHub](https://github.com/myk-org/github-webhook-server/issues)
+4. **Create a new issue** with:
+   - Server version
+   - Configuration (sanitized)
+   - Relevant log entries
+   - Steps to reproduce
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Monitoring" icon="chart-line" href="/advanced/monitoring">
+    Set up monitoring and alerts
+  </Card>
+  <Card title="Contributing" icon="code" href="/advanced/contributing">
+    Contribute to the webhook server
+  </Card>
+</CardGroup>

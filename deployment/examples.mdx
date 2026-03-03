@@ -1,0 +1,496 @@
+---
+title: "Deployment Examples"
+description: "Complete deployment examples and configuration references"
+---
+
+## Overview
+
+The GitHub Webhook Server includes comprehensive examples in the `examples/` directory to help you get started quickly.
+
+## Available Examples
+
+<CardGroup cols={3}>
+  <Card title="config.yaml" icon="gear" href="https://github.com/myakove/github-webhook-server/blob/main/examples/config.yaml">
+    Complete server configuration
+  </Card>
+  <Card title="docker-compose.yaml" icon="docker" href="https://github.com/myakove/github-webhook-server/blob/main/examples/docker-compose.yaml">
+    Docker Compose setup
+  </Card>
+  <Card title=".github-webhook-server.yaml" icon="file" href="https://github.com/myakove/github-webhook-server/blob/main/examples/.github-webhook-server.yaml">
+    Repository-specific config
+  </Card>
+</CardGroup>
+
+## Server Configuration (config.yaml)
+
+The `examples/config.yaml` file demonstrates all available server configuration options:
+
+### Key Features Demonstrated
+
+**Server Settings:**
+- Log levels and log files (webhook-server.log, mcp_server.log, logs_server.log)
+- SSL warnings configuration
+- Sensitive data masking
+
+**GitHub Integration:**
+- GitHub App ID and tokens
+- Webhook IP configuration
+- Docker registry authentication
+
+**Automation Settings:**
+- Default status checks
+- Auto-verified and merged users
+- Cherry-pick configuration
+- Issue creation for new PRs
+
+**Labels Configuration:**
+- Enabled label categories (verified, hold, wip, needs-rebase, etc.)
+- Custom label colors (CSS3 color names)
+- Dynamic label prefixes
+
+**PR Size Labels:**
+- Custom size thresholds (Tiny, Small, Medium, Large, Massive)
+- Color coding for each size
+- Infinity threshold for unbounded categories
+
+**Branch Protection:**
+- Strict mode
+- Code owner reviews
+- Stale review dismissal
+- Required approving review count
+- Linear history enforcement
+- Conversation resolution
+
+**AI Integration:**
+- PR Test Oracle configuration (server-url, ai-provider, ai-model)
+- AI Features for conventional title suggestions
+- Test pattern matching
+- Trigger configuration (approved, pr-opened, pr-synchronized)
+
+**Repository-Specific:**
+- Per-repository log levels and files
+- Slack webhook integration
+- Tox testing configuration
+- Container building and publishing
+- PyPI publishing
+- Conventional Commits validation
+
+### Example Snippet
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/myk-org/github-webhook-server/refs/heads/main/webhook_server/config/schema.yaml
+
+log-level: INFO
+log-file: webhook-server.log
+mask-sensitive-data: true
+
+github-app-id: 123456
+webhook-ip: https://your-domain.com/webhook_server
+
+github-tokens:
+  - ghp_token1
+  - ghp_token2
+
+default-status-checks:
+  - "WIP"
+  - "can-be-merged"
+
+auto-verified-and-merged-users:
+  - "renovate[bot]"
+  - "pre-commit-ci[bot]"
+
+# Global PR size labels
+pr-size-thresholds:
+  Tiny:
+    threshold: 10
+    color: lightgray
+  Small:
+    threshold: 50
+    color: green
+  Medium:
+    threshold: 150
+    color: orange
+  Large:
+    threshold: 300
+    color: red
+  Massive:
+    threshold: inf
+    color: darkred
+
+repositories:
+  my-repository:
+    name: my-org/my-repository
+    verified-job: true
+    pre-commit: true
+    protected-branches:
+      main: []
+```
+
+## Docker Compose (docker-compose.yaml)
+
+The `examples/docker-compose.yaml` provides a production-ready Docker Compose configuration:
+
+### Configuration Details
+
+```yaml
+services:
+  github-webhook-server:
+    container_name: github-webhook-server
+    image: ghcr.io/myk-org/github-webhook-server:latest
+    volumes:
+      - "./webhook_server_data_dir:/home/podman/data:Z"
+      - "/tmp/podman-storage-${USER:-1000}:/tmp/storage-run-1000"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Jerusalem
+      - MAX_WORKERS=50
+      - WEBHOOK_SERVER_IP_BIND=0.0.0.0
+      - WEBHOOK_SERVER_PORT=5000
+      - WEBHOOK_SECRET=<secret>
+      - VERIFY_GITHUB_IPS=1
+      - VERIFY_CLOUDFLARE_IPS=1
+      - ENABLE_LOG_SERVER=true
+      - ENABLE_MCP_SERVER=false
+    ports:
+      - "5000:5000"
+    privileged: true
+    restart: unless-stopped
+```
+
+### Key Features
+
+**Volume Mounts:**
+- Data directory for config.yaml and private key (`:Z` for SELinux)
+- Temporary storage for Podman-in-Podman operations
+
+**Environment Variables:**
+- User/Group IDs (PUID/PGID)
+- Timezone configuration
+- Worker pool size (MAX_WORKERS=50)
+- Security settings (VERIFY_GITHUB_IPS, VERIFY_CLOUDFLARE_IPS)
+- Feature toggles (ENABLE_LOG_SERVER, ENABLE_MCP_SERVER)
+
+**AI Integration (Optional):**
+```yaml
+environment:
+  # Uncomment for pr-test-oracle integration
+  # - ANTHROPIC_API_KEY=sk-ant-xxx
+  # - GEMINI_API_KEY=xxx
+  # - CURSOR_API_KEY=xxx
+```
+
+**Container Settings:**
+- Privileged mode for container building
+- Automatic restart policy
+- Port mapping (5000:5000)
+
+## Repository Configuration (.github-webhook-server.yaml)
+
+The `examples/.github-webhook-server.yaml` shows how to override global settings per repository:
+
+### Use Cases
+
+**Repository-Specific Overrides:**
+- Custom log levels for debugging
+- Repository-specific Slack notifications
+- Different testing strategies (tox configurations)
+- Custom PR size labels
+- Branch-specific protection rules
+- Minimum LGTM requirements
+
+### Example Snippet
+
+```yaml
+# Logging (overrides global)
+log-level: DEBUG
+log-file: /path/to/repository-specific.log
+
+# Slack integration
+slack-webhook-url: https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK
+
+# Tox configuration
+tox:
+  main: "tests,linting"
+  develop: "tests"
+  feature/*: ["tests", "quick-lint"]
+
+# Custom PR size labels for this repository
+pr-size-thresholds:
+  Quick:
+    threshold: 20
+    color: lightgreen
+  Normal:
+    threshold: 100
+    color: green
+  Complex:
+    threshold: 300
+    color: orange
+  Critical:
+    threshold: 1000
+    color: darkred
+  Extreme:
+    threshold: inf
+    color: black
+
+# Branch protection
+protected-branches:
+  main: []
+  develop:
+    include-runs:
+      - "Required CI Check"
+    exclude-runs:
+      - "Optional Check"
+
+# Container configuration
+container:
+  username: your-registry-username
+  password: your-registry-password
+  repository: quay.io/your-org/your-repo
+  tag: latest
+  release: true
+
+# Conventional Commits validation
+conventional-title: "feat,fix,build,chore,ci,docs,style,refactor,perf,test,revert"
+
+# Minimum LGTM count
+minimum-lgtm: 2
+
+# AI Features (overrides global)
+ai-features:
+  ai-provider: "claude"
+  ai-model: "claude-opus-4-6[1m]"
+  conventional-title: "true"  # "true": suggest | "false": disabled | "fix": auto-update
+```
+
+### Placement
+
+Place this file in the root of your repository:
+
+```
+your-repository/
+├── .github-webhook-server.yaml
+├── .github/
+├── src/
+└── README.md
+```
+
+## Configuration Schema
+
+All configuration files support JSON Schema validation for IDE autocompletion:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/myk-org/github-webhook-server/refs/heads/main/webhook_server/config/schema.yaml
+```
+
+Add this as the first line of your config files for:
+- IDE autocompletion
+- Inline documentation
+- Real-time validation
+- Error detection
+
+## Validation
+
+### Validate Configuration
+
+```bash
+# Validate your config.yaml
+uv run webhook_server/tests/test_schema_validator.py /path/to/config.yaml
+
+# Validate example configuration
+uv run webhook_server/tests/test_schema_validator.py examples/config.yaml
+
+# Run all configuration tests
+uv run pytest webhook_server/tests/test_config_schema.py -v
+```
+
+## Common Configuration Patterns
+
+### Minimal Setup
+
+```yaml
+github-app-id: 123456
+webhook-ip: https://your-domain.com/webhook_server
+
+github-tokens:
+  - ghp_your_token
+
+repositories:
+  my-repo:
+    name: my-org/my-repo
+    protected-branches:
+      main: []
+```
+
+### Multi-Repository Setup
+
+```yaml
+repositories:
+  project-a:
+    name: my-org/project-a
+    verified-job: true
+    pre-commit: true
+    minimum-lgtm: 2
+    
+  project-b:
+    name: my-org/project-b
+    verified-job: true
+    tox:
+      main: all
+    container:
+      repository: quay.io/my-org/project-b
+      release: true
+```
+
+### Container Building Setup
+
+```yaml
+repositories:
+  my-app:
+    name: my-org/my-app
+    container:
+      username: registry-user
+      password: registry-password
+      repository: quay.io/my-org/my-app
+      tag: latest
+      release: true
+      build-args:
+        - BUILD_VERSION=1.0.0
+      args:
+        - --format docker
+        - --no-cache
+```
+
+### PyPI Publishing Setup
+
+```yaml
+repositories:
+  python-package:
+    name: my-org/python-package
+    verified-job: true
+    pre-commit: true
+    pypi:
+      token: pypi-token-here
+    tox:
+      main: all
+```
+
+### AI Integration Setup
+
+```yaml
+# Global AI configuration
+test-oracle:
+  server-url: "http://localhost:8000"
+  ai-provider: "claude"
+  ai-model: "claude-opus-4-6[1m]"
+  test-patterns:
+    - "tests/**/*.py"
+  triggers:
+    - approved
+
+ai-features:
+  ai-provider: "claude"
+  ai-model: "claude-opus-4-6[1m]"
+  conventional-title: "true"
+
+# Repository-specific override
+repositories:
+  my-repo:
+    name: my-org/my-repo
+    test-oracle:
+      ai-model: "sonnet"  # Override model
+    ai-features:
+      conventional-title: "fix"  # Auto-fix titles
+```
+
+## Environment-Specific Configurations
+
+### Development Environment
+
+```yaml
+log-level: DEBUG
+mask-sensitive-data: false
+disable-ssl-warnings: true
+verify-github-ips: false
+```
+
+### Production Environment
+
+```yaml
+log-level: INFO
+mask-sensitive-data: true
+disable-ssl-warnings: false
+verify-github-ips: true
+verify-cloudflare-ips: true
+```
+
+## Access Examples Directory
+
+### View on GitHub
+
+All examples are available in the repository:
+
+```
+https://github.com/myakove/github-webhook-server/tree/main/examples
+```
+
+### Clone and Customize
+
+```bash
+# Clone repository
+git clone https://github.com/myakove/github-webhook-server.git
+
+# Copy examples to your deployment
+cd github-webhook-server
+cp examples/config.yaml /path/to/your/config.yaml
+cp examples/docker-compose.yaml /path/to/your/docker-compose.yaml
+
+# Customize for your needs
+vim /path/to/your/config.yaml
+```
+
+## Example Repository Structures
+
+### Simple Repository
+
+```
+repository-root/
+├── .github-webhook-server.yaml  # Repository config
+├── OWNERS                       # Root reviewers
+├── src/
+└── tests/
+```
+
+### Complex Repository with Components
+
+```
+repository-root/
+├── .github-webhook-server.yaml
+├── OWNERS                       # Root approvers
+├── backend/
+│   ├── OWNERS                   # Backend team
+│   └── src/
+├── frontend/
+│   ├── OWNERS                   # Frontend team
+│   └── src/
+└── docs/
+    ├── OWNERS                   # Docs team
+    └── content/
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Detailed configuration guide
+  </Card>
+  <Card title="Docker Deployment" icon="docker" href="/deployment/docker">
+    Docker deployment guide
+  </Card>
+  <Card title="Kubernetes" icon="dharmachakra" href="/deployment/kubernetes">
+    Kubernetes deployment
+  </Card>
+  <Card title="OWNERS Files" icon="users" href="/concepts/owners-files">
+    OWNERS file format
+  </Card>
+</CardGroup>

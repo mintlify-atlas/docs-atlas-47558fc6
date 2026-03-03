@@ -1,0 +1,344 @@
+---
+title: 'GET /logs/api/export'
+description: 'Export filtered logs as downloadable JSON file'
+---
+
+## Endpoint
+
+```http
+GET /logs/api/export
+```
+
+Exports filtered webhook logs as a downloadable JSON file with metadata. Uses memory-efficient streaming for large datasets.
+
+<Warning>
+**Security Warning**: This endpoint is NOT protected by authentication. Never expose it outside your trusted network. Deploy behind a reverse proxy with authentication, use firewall rules to restrict access, and never expose log viewer ports directly to the internet. Exported files may contain GitHub tokens, user information, repository details, and sensitive webhook payloads.
+</Warning>
+
+## Query Parameters
+
+All query parameters are optional except `format`. Supports the same filtering options as `/logs/api/entries`.
+
+<ParamField query="format" type="string" required>
+  Export format. Currently only `json` is supported.
+  
+  Example: `format=json`
+</ParamField>
+
+<ParamField query="hook_id" type="string">
+  Filter by specific GitHub delivery ID
+  
+  Example: `hook_id=abc123-def456`
+</ParamField>
+
+<ParamField query="pr_number" type="integer">
+  Filter by pull request number
+  
+  Example: `pr_number=123`
+</ParamField>
+
+<ParamField query="repository" type="string">
+  Filter by repository name in `owner/repo` format
+  
+  Example: `repository=my-org/my-repo`
+</ParamField>
+
+<ParamField query="event_type" type="string">
+  Filter by GitHub event type
+  
+  Example: `event_type=pull_request`
+</ParamField>
+
+<ParamField query="github_user" type="string">
+  Filter by GitHub username
+  
+  Example: `github_user=octocat`
+</ParamField>
+
+<ParamField query="level" type="string">
+  Filter by log level: `DEBUG`, `INFO`, `WARNING`, `ERROR`
+  
+  Example: `level=ERROR`
+</ParamField>
+
+<ParamField query="start_time" type="string">
+  Start time filter in ISO 8601 format
+  
+  Example: `start_time=2025-01-30T00:00:00Z`
+</ParamField>
+
+<ParamField query="end_time" type="string">
+  End time filter in ISO 8601 format
+  
+  Example: `end_time=2025-01-30T23:59:59Z`
+</ParamField>
+
+<ParamField query="search" type="string">
+  Full-text search in log messages
+  
+  Example: `search=error`
+</ParamField>
+
+<ParamField query="limit" type="integer" default="10000">
+  Maximum number of entries to export (1-50,000)
+  
+  **Important**: Maximum limit is 50,000 entries to prevent excessive server load
+  
+  Example: `limit=1000`
+</ParamField>
+
+## Response
+
+Returns a `StreamingResponse` with `Content-Disposition: attachment` header to trigger file download.
+
+### Response Headers
+
+- `Content-Type`: `application/json`
+- `Content-Disposition`: `attachment; filename=webhook_logs_YYYYMMDD_HHMMSS.json`
+
+### JSON File Structure
+
+<ResponseField name="export_metadata" type="object">
+  Metadata about the export
+  
+  <Expandable title="Metadata Fields">
+    <ResponseField name="generated_at" type="string">
+      ISO 8601 timestamp of when export was generated
+    </ResponseField>
+    
+    <ResponseField name="filters_applied" type="object">
+      Dictionary of filters that were applied (only includes filters with non-null values)
+    </ResponseField>
+    
+    <ResponseField name="total_entries" type="integer">
+      Number of log entries included in the export
+    </ResponseField>
+    
+    <ResponseField name="export_format" type="string">
+      Export format type (`"json"`)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="log_entries" type="array">
+  Array of log entry objects (same structure as `/logs/api/entries` response)
+  
+  <Expandable title="Log Entry Fields">
+    <ResponseField name="timestamp" type="string">
+      ISO 8601 timestamp
+    </ResponseField>
+    
+    <ResponseField name="level" type="string">
+      Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR`
+    </ResponseField>
+    
+    <ResponseField name="logger_name" type="string">
+      Logger component name
+    </ResponseField>
+    
+    <ResponseField name="message" type="string">
+      Log message text
+    </ResponseField>
+    
+    <ResponseField name="hook_id" type="string" optional>
+      GitHub delivery ID
+    </ResponseField>
+    
+    <ResponseField name="event_type" type="string" optional>
+      GitHub event type
+    </ResponseField>
+    
+    <ResponseField name="repository" type="string" optional>
+      Repository name
+    </ResponseField>
+    
+    <ResponseField name="pr_number" type="integer" optional>
+      Pull request number
+    </ResponseField>
+    
+    <ResponseField name="github_user" type="string" optional>
+      GitHub username
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Examples
+
+### Export all error logs
+
+```bash
+curl "http://localhost:5000/logs/api/export?format=json&level=ERROR" -o errors.json
+```
+
+<CodeGroup>
+```json errors.json
+{
+  "export_metadata": {
+    "generated_at": "2025-01-30T12:34:56.789000Z",
+    "filters_applied": {
+      "level": "ERROR",
+      "limit": 10000
+    },
+    "total_entries": 42,
+    "export_format": "json"
+  },
+  "log_entries": [
+    {
+      "timestamp": "2025-01-30T10:30:00.123000",
+      "level": "ERROR",
+      "logger_name": "PullRequestHandler",
+      "message": "Failed to assign reviewers: API rate limit exceeded",
+      "hook_id": "abc123-def456",
+      "event_type": "pull_request",
+      "repository": "my-org/my-repo",
+      "pr_number": 123,
+      "github_user": "octocat"
+    }
+  ]
+}
+```
+</CodeGroup>
+
+### Export logs for specific PR
+
+```bash
+curl "http://localhost:5000/logs/api/export?format=json&pr_number=123&limit=5000" -o pr-123-logs.json
+```
+
+### Export logs for repository within time range
+
+```bash
+curl "http://localhost:5000/logs/api/export?format=json&repository=my-org/my-repo&start_time=2025-01-30T00:00:00Z&end_time=2025-01-30T23:59:59Z" -o daily-logs.json
+```
+
+### Export logs matching search term
+
+```bash
+curl "http://localhost:5000/logs/api/export?format=json&search=rate%20limit&limit=1000" -o rate-limit-logs.json
+```
+
+### Export complete webhook history
+
+```bash
+curl "http://localhost:5000/logs/api/export?format=json&hook_id=abc123-def456" -o webhook-abc123.json
+```
+
+## Export Limits
+
+<Note>
+**Maximum Export Size**: 50,000 entries
+
+The export endpoint enforces a maximum limit of 50,000 entries to prevent server overload and excessive memory usage. If you need to export more data:
+
+1. Use more specific filters to reduce the result set
+2. Export data in multiple batches using time ranges
+3. Use pagination with multiple export requests
+</Note>
+
+### Processing Limits
+
+- **Without filters**: Processes up to `limit + 1000` entries
+- **With filters**: Processes up to `min(limit + 20000, 100000)` entries
+- **Maximum log files examined**: 25 most recent files
+
+## Performance Considerations
+
+- **Streaming architecture**: Memory-efficient processing for large exports
+- **Early filtering**: Applies filters during log parsing to minimize memory usage
+- **Automatic cleanup**: Releases processed data immediately after transmission
+- **Response time**: Sub-second to several seconds depending on filter complexity and dataset size
+
+## Error Responses
+
+<ResponseField name="400 Bad Request" type="error">
+  Invalid parameters (e.g., unsupported format)
+  
+  ```json
+  {
+    "detail": "Invalid format: csv. Only 'json' is supported."
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="413 Payload Too Large" type="error">
+  Result set exceeds maximum export limit
+  
+  ```json
+  {
+    "detail": "Result set too large (max 50000 entries)"
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="500 Internal Server Error" type="error">
+  Export generation failed
+  
+  ```json
+  {
+    "detail": "Export generation failed"
+  }
+  ```
+</ResponseField>
+
+## Use Cases
+
+- **Offline analysis**: Export logs for analysis with external tools
+- **Archiving**: Create backups of webhook processing logs
+- **Compliance**: Export logs for audit trails and compliance reporting
+- **Debugging**: Download logs for detailed investigation of issues
+- **Data processing**: Import logs into analytics platforms or databases
+- **Incident response**: Export error logs for post-mortem analysis
+
+## Integration Examples
+
+### Python
+
+```python
+import requests
+
+# Export error logs
+response = requests.get(
+    "http://localhost:5000/logs/api/export",
+    params={
+        "format": "json",
+        "level": "ERROR",
+        "limit": 1000
+    }
+)
+
+with open("errors.json", "wb") as f:
+    f.write(response.content)
+```
+
+### JavaScript/Node.js
+
+```javascript
+const fs = require('fs');
+const https = require('https');
+
+const url = 'http://localhost:5000/logs/api/export?format=json&pr_number=123';
+
+https.get(url, (response) => {
+  const fileStream = fs.createWriteStream('pr-logs.json');
+  response.pipe(fileStream);
+  fileStream.on('finish', () => {
+    console.log('Export complete');
+  });
+});
+```
+
+### Shell Script
+
+```bash
+#!/bin/bash
+
+# Export daily logs for all repositories
+DATE=$(date +%Y-%m-%d)
+START="${DATE}T00:00:00Z"
+END="${DATE}T23:59:59Z"
+
+curl "http://localhost:5000/logs/api/export?format=json&start_time=${START}&end_time=${END}" \
+  -o "logs-${DATE}.json"
+
+echo "Exported logs for ${DATE}"
+```

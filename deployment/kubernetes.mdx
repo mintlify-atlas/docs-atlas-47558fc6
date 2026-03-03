@@ -1,0 +1,539 @@
+---
+title: "Kubernetes Deployment"
+description: "Deploy GitHub Webhook Server on Kubernetes clusters"
+---
+
+## Overview
+
+Deploy the GitHub Webhook Server on Kubernetes with ConfigMaps for configuration, Secrets for sensitive data, and proper health checks.
+
+## Deployment Manifest
+
+Here's the complete Kubernetes deployment from the README:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-webhook-server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: github-webhook-server
+  template:
+    metadata:
+      labels:
+        app: github-webhook-server
+    spec:
+      containers:
+        - name: webhook-server
+          image: ghcr.io/myk-org/github-webhook-server:latest
+          ports:
+            - containerPort: 5000
+          env:
+            - name: WEBHOOK_SERVER_DATA_DIR
+              value: "/data"
+            - name: WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: webhook-secret
+                  key: secret
+          volumeMounts:
+            - name: config-volume
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /webhook_server/healthcheck
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /webhook_server/healthcheck
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config-volume
+          configMap:
+            name: webhook-config
+```
+
+## Service Configuration
+
+Expose the webhook server with a LoadBalancer service:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: github-webhook-server-service
+spec:
+  selector:
+    app: github-webhook-server
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 5000
+  type: LoadBalancer
+```
+
+<Note>
+For production environments, use an Ingress controller instead of LoadBalancer for better SSL/TLS management.
+</Note>
+
+## ConfigMap for config.yaml
+
+Store the webhook server configuration in a ConfigMap:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webhook-config
+data:
+  config.yaml: |
+    # yaml-language-server: $schema=https://raw.githubusercontent.com/myk-org/github-webhook-server/refs/heads/main/webhook_server/config/schema.yaml
+    
+    log-level: INFO
+    log-file: webhook-server.log
+    
+    github-app-id: 123456
+    webhook-ip: https://your-domain.com/webhook_server
+    
+    github-tokens:
+      - ghp_your_github_token
+    
+    default-status-checks:
+      - "WIP"
+      - "can-be-merged"
+    
+    repositories:
+      my-repository:
+        name: my-org/my-repository
+        protected-branches:
+          main: []
+```
+
+<Warning>
+Do NOT store sensitive tokens in ConfigMaps. Use Secrets instead.
+</Warning>
+
+## Secrets for Sensitive Data
+
+Create a Secret for the webhook secret and GitHub tokens:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: webhook-secret
+type: Opaque
+stringData:
+  secret: "your-webhook-secret-here"
+```
+
+### GitHub Tokens Secret
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-tokens
+type: Opaque
+stringData:
+  token: "ghp_your_github_token_here"
+```
+
+### GitHub App Private Key
+
+For the GitHub App private key:
+
+```bash
+# Create secret from file
+kubectl create secret generic github-app-key \
+  --from-file=webhook-server.private-key.pem=/path/to/private-key.pem
+```
+
+Mount it in the deployment:
+
+```yaml
+volumeMounts:
+  - name: github-app-key
+    mountPath: /data/webhook-server.private-key.pem
+    subPath: webhook-server.private-key.pem
+    readOnly: true
+volumes:
+  - name: github-app-key
+    secret:
+      secretName: github-app-key
+```
+
+## Environment Variables
+
+Configure environment variables in the deployment:
+
+```yaml
+env:
+  - name: WEBHOOK_SERVER_DATA_DIR
+    value: "/data"
+  - name: WEBHOOK_SERVER_PORT
+    value: "5000"
+  - name: MAX_WORKERS
+    value: "20"
+  - name: WEBHOOK_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: webhook-secret
+        key: secret
+  - name: VERIFY_GITHUB_IPS
+    value: "1"
+  - name: VERIFY_CLOUDFLARE_IPS
+    value: "1"
+  - name: ENABLE_LOG_SERVER
+    value: "true"
+  - name: ENABLE_MCP_SERVER
+    value: "false"
+```
+
+### AI Integration (Optional)
+
+For pr-test-oracle integration:
+
+```yaml
+env:
+  - name: ANTHROPIC_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: ai-api-keys
+        key: anthropic
+  - name: GEMINI_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: ai-api-keys
+        key: gemini
+  - name: CURSOR_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: ai-api-keys
+        key: cursor
+```
+
+## Health Checks and Probes
+
+### Liveness Probe
+
+Ensures the container is restarted if unhealthy:
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /webhook_server/healthcheck
+    port: 5000
+  initialDelaySeconds: 30
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+```
+
+### Readiness Probe
+
+Ensures traffic is only sent to ready pods:
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /webhook_server/healthcheck
+    port: 5000
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  successThreshold: 1
+  failureThreshold: 3
+```
+
+### Startup Probe (Optional)
+
+For slow-starting applications:
+
+```yaml
+startupProbe:
+  httpGet:
+    path: /webhook_server/healthcheck
+    port: 5000
+  initialDelaySeconds: 0
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 30
+```
+
+## Resource Limits
+
+Set resource requests and limits:
+
+```yaml
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "500m"
+  limits:
+    memory: "2Gi"
+    cpu: "2000m"
+```
+
+<Note>
+Adjust based on your workload. Monitor actual usage and adjust accordingly.
+</Note>
+
+## Horizontal Pod Autoscaler
+
+Automatically scale based on CPU/memory:
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: github-webhook-server-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: github-webhook-server
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+```
+
+## Ingress Configuration
+
+For production deployments with SSL/TLS:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: github-webhook-server-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - webhook.your-domain.com
+      secretName: webhook-tls
+  rules:
+    - host: webhook.your-domain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: github-webhook-server-service
+                port:
+                  number: 80
+```
+
+## Persistent Storage (Optional)
+
+For persistent logs and data:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: webhook-server-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-webhook-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: webhook-server
+          volumeMounts:
+            - name: data-volume
+              mountPath: /home/podman/data/logs
+      volumes:
+        - name: data-volume
+          persistentVolumeClaim:
+            claimName: webhook-server-data
+```
+
+## Privileged Mode for Container Building
+
+<Warning>
+Container building requires privileged mode. Use with caution in production.
+</Warning>
+
+If you need container building features:
+
+```yaml
+securityContext:
+  privileged: true
+```
+
+For better security, use a dedicated build pod or external build service instead.
+
+## Deployment Steps
+
+### 1. Create Namespace
+
+```bash
+kubectl create namespace webhook-server
+```
+
+### 2. Create Secrets
+
+```bash
+# Webhook secret
+kubectl create secret generic webhook-secret \
+  --from-literal=secret='your-webhook-secret' \
+  -n webhook-server
+
+# GitHub App private key
+kubectl create secret generic github-app-key \
+  --from-file=webhook-server.private-key.pem=/path/to/private-key.pem \
+  -n webhook-server
+
+# AI API keys (optional)
+kubectl create secret generic ai-api-keys \
+  --from-literal=anthropic='sk-ant-xxx' \
+  --from-literal=gemini='xxx' \
+  --from-literal=cursor='xxx' \
+  -n webhook-server
+```
+
+### 3. Create ConfigMap
+
+```bash
+kubectl create configmap webhook-config \
+  --from-file=config.yaml=/path/to/config.yaml \
+  -n webhook-server
+```
+
+### 4. Apply Deployment
+
+```bash
+kubectl apply -f deployment.yaml -n webhook-server
+```
+
+### 5. Apply Service
+
+```bash
+kubectl apply -f service.yaml -n webhook-server
+```
+
+### 6. Verify Deployment
+
+```bash
+# Check pods
+kubectl get pods -n webhook-server
+
+# Check logs
+kubectl logs -f deployment/github-webhook-server -n webhook-server
+
+# Check service
+kubectl get svc -n webhook-server
+```
+
+## Monitoring
+
+### Check Health
+
+```bash
+# Port-forward to test
+kubectl port-forward svc/github-webhook-server-service 5000:80 -n webhook-server
+
+# Test health endpoint
+curl http://localhost:5000/webhook_server/healthcheck
+```
+
+### View Logs
+
+```bash
+# All pods
+kubectl logs -l app=github-webhook-server -n webhook-server
+
+# Specific pod
+kubectl logs github-webhook-server-xxx -n webhook-server
+
+# Follow logs
+kubectl logs -f deployment/github-webhook-server -n webhook-server
+```
+
+## Troubleshooting
+
+### Pod Not Starting
+
+```bash
+# Describe pod
+kubectl describe pod github-webhook-server-xxx -n webhook-server
+
+# Check events
+kubectl get events -n webhook-server --sort-by='.lastTimestamp'
+```
+
+### ConfigMap Issues
+
+```bash
+# View ConfigMap
+kubectl get configmap webhook-config -o yaml -n webhook-server
+
+# Update ConfigMap
+kubectl create configmap webhook-config \
+  --from-file=config.yaml=/path/to/config.yaml \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# Restart deployment to pick up changes
+kubectl rollout restart deployment/github-webhook-server -n webhook-server
+```
+
+### Secret Issues
+
+```bash
+# View secret (base64 encoded)
+kubectl get secret webhook-secret -o yaml -n webhook-server
+
+# Decode secret
+kubectl get secret webhook-secret -o jsonpath='{.data.secret}' -n webhook-server | base64 -d
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Configure your webhook server
+  </Card>
+  <Card title="Docker" icon="docker" href="/deployment/docker">
+    Docker deployment options
+  </Card>
+  <Card title="Examples" icon="code" href="/deployment/examples">
+    View deployment examples
+  </Card>
+  <Card title="Security" icon="shield" href="/security/overview">
+    Security best practices
+  </Card>
+</CardGroup>

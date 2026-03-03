@@ -1,0 +1,628 @@
+---
+title: MCP Endpoints
+description: Complete API reference for Model Context Protocol endpoints
+---
+
+This page documents all MCP endpoints available for AI agent integration. All endpoints are mounted under the `/mcp` prefix and provide read-only access to webhook server data.
+
+<Info>
+  MCP endpoints are functionally equivalent to standard log viewer endpoints but optimized for AI agent access with automatic discovery and structured metadata.
+</Info>
+
+## Base URL
+
+All MCP endpoints use the following base URL:
+
+```
+http://your-server:5000/mcp
+```
+
+## Security Considerations
+
+<Warning>
+  **All MCP endpoints are unauthenticated by design.** Deploy only on trusted networks or behind authenticated reverse proxy. See [Log Viewer Security](/security/log-viewer-security) for required security measures.
+</Warning>
+
+### Data Exposure
+
+MCP endpoints expose:
+- GitHub webhook payloads and processing logs
+- Personal access tokens (if not masked)
+- User information and repository details
+- System performance and error data
+
+## Available Endpoints
+
+### Health Check
+
+**Endpoint:** `GET /mcp/webhook_server/healthcheck`
+
+**Description:** Server health status check for monitoring and uptime verification.
+
+**Use Case:** AI agents can verify server availability before querying logs.
+
+**Parameters:** None
+
+**Response:**
+
+```json
+{
+  "status": 200,
+  "message": "Alive"
+}
+```
+
+**Example AI Query:**
+```
+"What's the current health status of my webhook server?"
+"Is the webhook server running?"
+```
+
+**cURL Example:**
+```bash
+curl http://localhost:5000/mcp/webhook_server/healthcheck
+```
+
+---
+
+### Get Log Entries
+
+**Endpoint:** `GET /mcp/logs/api/entries`
+
+**Description:** Retrieve and filter webhook processing logs with advanced pagination and search capabilities.
+
+**Use Case:** AI agents query historical logs for debugging, analysis, and reporting.
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description | Example |
+|-----------|------|----------|-------------|--------|
+| `hook_id` | string | No | GitHub webhook delivery ID | `f4b3c2d1-a9b8-4c5d-9e8f-1a2b3c4d5e6f` |
+| `pr_number` | integer | No | Pull request number | `42` |
+| `repository` | string | No | Repository name (owner/repo) | `myakove/github-webhook-server` |
+| `event_type` | string | No | GitHub webhook event type | `pull_request`, `push`, `issues` |
+| `github_user` | string | No | GitHub username | `myakove` |
+| `level` | string | No | Log level filter | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `start_time` | string | No | Start time (ISO 8601) | `2024-01-15T10:00:00Z` |
+| `end_time` | string | No | End time (ISO 8601) | `2024-01-15T18:00:00Z` |
+| `search` | string | No | Text search (case-insensitive) | `rate limit` |
+| `limit` | integer | No | Max entries (1-10000) | `100` (default) |
+| `offset` | integer | No | Pagination offset | `0` (default) |
+
+**Response:**
+
+```json
+{
+  "entries": [
+    {
+      "timestamp": "2024-01-15T14:30:25.123456",
+      "level": "INFO",
+      "message": "Processing webhook for repository: myakove/test-repo",
+      "hook_id": "f4b3c2d1-a9b8-4c5d-9e8f-1a2b3c4d5e6f",
+      "repository": "myakove/test-repo",
+      "event_type": "pull_request",
+      "github_user": "contributor123",
+      "pr_number": 42,
+      "additional_data": {}
+    }
+  ],
+  "total_count": 1542,
+  "has_more": true,
+  "next_offset": 100
+}
+```
+
+**Example AI Queries:**
+```
+"Show me all ERROR level logs from the last 24 hours"
+"Find all pull_request events for repository myakove/test-repo"
+"Get logs for specific webhook delivery ID abc123"
+"What webhooks did user 'contributor' trigger today?"
+```
+
+**cURL Example:**
+```bash
+# Get recent errors
+curl "http://localhost:5000/mcp/logs/api/entries?level=ERROR&limit=50"
+
+# Get PR-specific logs
+curl "http://localhost:5000/mcp/logs/api/entries?pr_number=42&repository=owner/repo"
+
+# Time-based query
+curl "http://localhost:5000/mcp/logs/api/entries?start_time=2024-01-15T00:00:00Z&level=ERROR"
+```
+
+**Common Filtering Scenarios:**
+
+<AccordionGroup>
+  <Accordion title="Recent Errors">
+    ```bash
+    # Errors from last 24 hours
+    curl "http://localhost:5000/mcp/logs/api/entries?level=ERROR&start_time=2024-01-15T00:00:00Z"
+    ```
+  </Accordion>
+  
+  <Accordion title="PR Workflow Analysis">
+    ```bash
+    # All logs for specific PR
+    curl "http://localhost:5000/mcp/logs/api/entries?pr_number=42&repository=owner/repo"
+    ```
+  </Accordion>
+  
+  <Accordion title="User Activity Audit">
+    ```bash
+    # Activity by specific user
+    curl "http://localhost:5000/mcp/logs/api/entries?github_user=username&start_time=2024-01-01T00:00:00Z"
+    ```
+  </Accordion>
+  
+  <Accordion title="Webhook Delivery Debugging">
+    ```bash
+    # Specific delivery trace
+    curl "http://localhost:5000/mcp/logs/api/entries?hook_id=delivery-id-123"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+### Export Logs
+
+**Endpoint:** `GET /mcp/logs/api/export`
+
+**Description:** Export filtered webhook logs to downloadable JSON files for offline analysis.
+
+**Use Case:** AI agents can export large datasets for batch processing, compliance reporting, or long-term archival.
+
+**Query Parameters:**
+
+Same as `/mcp/logs/api/entries` plus:
+
+| Parameter | Type | Required | Description | Default |
+|-----------|------|----------|-------------|--------|
+| `format_type` | string | No | Export format (currently `json` only) | `json` |
+| `limit` | integer | No | Max entries to export (1-100000) | `10000` |
+
+**Response:**
+
+Streaming JSON file download with headers:
+- `Content-Type: application/json`
+- `Content-Disposition: attachment; filename="logs_export_YYYY-MM-DD_HH-MM-SS.json"`
+- `Transfer-Encoding: chunked`
+
+**JSON Export Format:**
+
+```json
+{
+  "export_metadata": {
+    "generated_at": "2024-01-15T14:30:25.123456Z",
+    "filters_applied": {
+      "repository": "myakove/test-repo",
+      "level": "ERROR",
+      "start_time": "2024-01-01T00:00:00Z"
+    },
+    "total_entries": 156,
+    "export_format": "json"
+  },
+  "log_entries": [
+    {
+      "timestamp": "2024-01-15T14:30:25.123456",
+      "level": "ERROR",
+      "message": "Container build failed for PR #42",
+      "hook_id": "delivery-id-123",
+      "repository": "myakove/test-repo",
+      "event_type": "pull_request",
+      "github_user": "contributor",
+      "pr_number": 42
+    }
+  ]
+}
+```
+
+**Example AI Queries:**
+```
+"Export all ERROR logs from last month for analysis"
+"Generate security audit report for user suspicious_user"
+"Create backup of repository critical/repo logs"
+```
+
+**cURL Example:**
+```bash
+# Export all errors from last month
+curl "http://localhost:5000/mcp/logs/api/export?format_type=json&level=ERROR&start_time=2024-01-01T00:00:00Z" \
+  -o errors_january.json
+
+# Export repository-specific logs
+curl "http://localhost:5000/mcp/logs/api/export?repository=owner/repo&limit=50000" \
+  -o repo_logs.json
+```
+
+**Performance Notes:**
+- Large exports (>10000 entries) may take several minutes
+- Memory usage optimized through streaming
+- Use specific filters to reduce export size
+
+---
+
+### Get PR Flow Data
+
+**Endpoint:** `GET /mcp/logs/api/pr-flow/{identifier}`
+
+**Description:** Get PR workflow visualization data for process analysis and debugging.
+
+**Use Case:** AI agents analyze PR processing workflows, identify bottlenecks, and track lifecycle stages.
+
+**Path Parameters:**
+
+| Parameter | Type | Required | Description | Example |
+|-----------|------|----------|-------------|--------|
+| `identifier` | string | Yes | Hook ID or PR number | `f4b3c2d1-a9b8-4c5d` or `123` |
+
+**Response:**
+
+```json
+{
+  "hook_id": "f4b3c2d1-a9b8-4c5d-9e8f-1a2b3c4d5e6f",
+  "pr_metadata": {
+    "number": 42,
+    "repository": "myakove/github-webhook-server",
+    "title": "Add new feature",
+    "author": "contributor",
+    "state": "open",
+    "created_at": "2024-01-15T10:00:00Z"
+  },
+  "workflow_stages": [
+    {
+      "name": "Webhook Received",
+      "timestamp": "2024-01-15T10:00:00.123000",
+      "status": "completed",
+      "duration_ms": null
+    },
+    {
+      "name": "Validation Complete",
+      "timestamp": "2024-01-15T10:00:00.245000",
+      "status": "completed",
+      "duration_ms": 122
+    },
+    {
+      "name": "Container Build",
+      "timestamp": "2024-01-15T10:00:05.678000",
+      "status": "failed",
+      "duration_ms": 5433,
+      "error": "Registry authentication failed"
+    }
+  ],
+  "performance_metrics": {
+    "total_duration_ms": 5555,
+    "success": false,
+    "health_status": "degraded"
+  },
+  "integration_status": {
+    "github_api_calls": 5,
+    "external_services": {
+      "container_registry": "failed"
+    }
+  }
+}
+```
+
+**Example AI Queries:**
+```
+"Analyze the processing flow for PR #123"
+"What stages did webhook delivery abc123 go through?"
+"Show me the timeline for PR processing in repository owner/repo"
+```
+
+**cURL Example:**
+```bash
+# Query by PR number
+curl "http://localhost:5000/mcp/logs/api/pr-flow/123"
+
+# Query by hook ID
+curl "http://localhost:5000/mcp/logs/api/pr-flow/f4b3c2d1-a9b8-4c5d-9e8f-1a2b3c4d5e6f"
+```
+
+---
+
+### Get Workflow Steps
+
+**Endpoint:** `GET /mcp/logs/api/workflow-steps/{identifier}`
+
+**Description:** Retrieve detailed timeline and execution data for individual workflow steps.
+
+**Use Case:** AI agents perform granular analysis of step-by-step execution, timing, and failures.
+
+**Path Parameters:**
+
+| Parameter | Type | Required | Description | Example |
+|-----------|------|----------|-------------|--------|
+| `identifier` | string | Yes | Hook ID | `f4b3c2d1-a9b8-4c5d-9e8f-1a2b3c4d5e6f` |
+
+**Response:**
+
+```json
+{
+  "hook_id": "f4b3c2d1-a9b8-4c5d-9e8f-1a2b3c4d5e6f",
+  "workflow_metadata": {
+    "repository": "myakove/github-webhook-server",
+    "event_type": "pull_request",
+    "initiated_at": "2024-01-15T10:00:00.123456Z",
+    "total_duration_ms": 45230,
+    "total_steps": 12,
+    "steps_completed": 10,
+    "steps_failed": 1,
+    "steps_skipped": 1
+  },
+  "execution_timeline": [
+    {
+      "step_id": "webhook_validation",
+      "step_name": "Webhook Signature Validation",
+      "sequence": 1,
+      "started_at": "2024-01-15T10:00:00.123456Z",
+      "completed_at": "2024-01-15T10:00:00.156789Z",
+      "duration_ms": 33,
+      "status": "completed",
+      "operation_type": "security",
+      "details": {
+        "signature_valid": true,
+        "payload_size_bytes": 2048
+      }
+    },
+    {
+      "step_id": "github_api_fetch_pr",
+      "step_name": "Fetch PR Details from GitHub API",
+      "sequence": 3,
+      "started_at": "2024-01-15T10:00:00.189012Z",
+      "completed_at": "2024-01-15T10:00:01.234567Z",
+      "duration_ms": 1045,
+      "status": "completed",
+      "operation_type": "api_call",
+      "details": {
+        "api_endpoint": "GET /repos/myakove/github-webhook-server/pulls/42",
+        "response_status": 200,
+        "rate_limit_used": 1,
+        "rate_limit_remaining": 4999
+      }
+    },
+    {
+      "step_id": "container_build_trigger",
+      "step_name": "Trigger Container Build",
+      "sequence": 8,
+      "started_at": "2024-01-15T10:00:05.123456Z",
+      "completed_at": "2024-01-15T10:00:05.234567Z",
+      "duration_ms": 111,
+      "status": "failed",
+      "operation_type": "build_system",
+      "error_details": {
+        "error_code": "BUILD_TRIGGER_FAILED",
+        "error_message": "Failed to trigger container build: Registry authentication failed",
+        "retry_attempts": 3
+      }
+    }
+  ],
+  "performance_analysis": {
+    "slowest_steps": [
+      {
+        "step_id": "github_api_fetch_pr",
+        "duration_ms": 1045,
+        "performance_category": "external_api"
+      }
+    ],
+    "step_categories": {
+      "security": {"total_duration_ms": 33, "step_count": 1},
+      "api_call": {"total_duration_ms": 2340, "step_count": 4},
+      "build_system": {"total_duration_ms": 111, "step_count": 1}
+    },
+    "bottlenecks": [
+      {
+        "category": "api_call",
+        "percentage_of_total": 51.8,
+        "recommendation": "Consider API response caching for repeated requests"
+      }
+    ]
+  },
+  "error_summary": {
+    "total_errors": 1,
+    "error_categories": {"build_system": 1},
+    "recoverable_errors": [
+      {
+        "step_id": "container_build_trigger",
+        "error_type": "authentication_failure",
+        "recovery_suggestion": "Verify registry credentials in configuration"
+      }
+    ]
+  }
+}
+```
+
+**Step Operation Types:**
+- `security` - Authentication, signature validation
+- `data_processing` - Payload parsing, validation
+- `api_call` - GitHub API requests, external service calls
+- `analysis` - PR analysis, file processing
+- `build_system` - Container builds, compilation
+- `notification` - Slack, email notifications
+- `storage` - Database operations, file I/O
+- `integration` - External system integration
+
+**Step Status Values:**
+- `pending` - Queued but not started
+- `in_progress` - Currently executing
+- `completed` - Finished successfully
+- `failed` - Encountered an error
+- `skipped` - Bypassed due to conditions
+- `timeout` - Exceeded maximum execution time
+- `retrying` - Being retried after failure
+
+**Example AI Queries:**
+```
+"Show detailed steps for webhook delivery abc123 to debug container build failures"
+"Analyze step timing for hook xyz789 to optimize PR processing performance"
+"What specific step is causing the slowdown in PR processing?"
+"Get failure details for hook def456 to troubleshoot GitHub API issues"
+```
+
+**cURL Example:**
+```bash
+curl "http://localhost:5000/mcp/logs/api/workflow-steps/f4b3c2d1-a9b8-4c5d-9e8f-1a2b3c4d5e6f"
+```
+
+## Comparison with Standard Endpoints
+
+MCP endpoints are mounted under `/mcp` prefix but functionally equivalent to standard endpoints:
+
+| Standard Endpoint | MCP Endpoint | Difference |
+|-------------------|--------------|------------|
+| `/logs/api/entries` | `/mcp/logs/api/entries` | AI-optimized metadata |
+| `/logs/api/export` | `/mcp/logs/api/export` | Same functionality |
+| `/logs/api/pr-flow/{id}` | `/mcp/logs/api/pr-flow/{id}` | Same functionality |
+| N/A | `/mcp/logs/api/workflow-steps/{id}` | MCP-specific |
+| `/webhook_server/healthcheck` | `/mcp/webhook_server/healthcheck` | Same functionality |
+
+**Key Differences:**
+
+1. **Automatic Discovery**: MCP endpoints support automatic discovery by AI agents
+2. **Metadata**: MCP responses include additional metadata for AI processing
+3. **No Web UI**: MCP endpoints return only JSON (no HTML pages)
+4. **No Static Files**: CSS/JavaScript assets not served via MCP
+5. **Security Isolation**: Webhook processing endpoint **NOT** exposed via MCP
+
+## Error Responses
+
+All MCP endpoints return standard HTTP error codes:
+
+### 400 Bad Request
+
+```json
+{
+  "detail": "Invalid datetime format in start_time parameter"
+}
+```
+
+**Common causes:**
+- Invalid query parameter format
+- Missing required path parameter
+- Invalid limit value (exceeds maximum)
+
+### 404 Not Found
+
+```json
+{
+  "detail": "No workflow steps found for hook_id: abc123"
+}
+```
+
+**Common causes:**
+- Hook ID not found in logs
+- PR number doesn't exist
+- Workflow data incomplete or corrupted
+
+### 500 Internal Server Error
+
+```json
+{
+  "detail": "Log file access error"
+}
+```
+
+**Common causes:**
+- Log file permissions issues
+- Disk I/O errors
+- Memory exhaustion
+- Log parsing errors
+
+### 503 Service Unavailable
+
+```json
+{
+  "detail": "MCP server not initialized"
+}
+```
+
+**Common causes:**
+- Server still starting up
+- MCP server disabled (`ENABLE_MCP_SERVER=false`)
+- Session manager initialization failure
+
+## Rate Limiting
+
+MCP endpoints have no built-in rate limiting. Implement rate limiting at the reverse proxy or firewall level:
+
+**nginx rate limiting:**
+
+```nginx
+http {
+    limit_req_zone $binary_remote_addr zone=mcp_api:10m rate=10r/s;
+    
+    server {
+        location /mcp {
+            limit_req zone=mcp_api burst=20 nodelay;
+            proxy_pass http://localhost:5000;
+        }
+    }
+}
+```
+
+## Performance Optimization
+
+### Query Optimization
+
+**Fast queries** (use specific identifiers):
+- `hook_id` - Direct lookup
+- `pr_number` + `repository` - Indexed search
+
+**Slower queries** (require full scan):
+- `search` without other filters - Text search across all logs
+- Wide time ranges without filters - Large dataset processing
+
+### Pagination Best Practices
+
+```bash
+# Efficient pagination
+curl "http://localhost:5000/mcp/logs/api/entries?limit=100&offset=0"
+curl "http://localhost:5000/mcp/logs/api/entries?limit=100&offset=100"
+curl "http://localhost:5000/mcp/logs/api/entries?limit=100&offset=200"
+```
+
+### Memory Efficiency
+
+- Streaming architecture handles large datasets efficiently
+- Use `limit` parameter to control memory usage
+- Export endpoint streams data (no memory spikes)
+
+## Security Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Network Isolation" icon="network-wired">
+    Deploy MCP endpoints only on trusted networks (VPN, internal network)
+  </Card>
+  
+  <Card title="Reverse Proxy" icon="shield">
+    Use authenticated reverse proxy for any external access
+  </Card>
+  
+  <Card title="Firewall Rules" icon="fire">
+    Restrict access to authorized IP ranges only
+  </Card>
+  
+  <Card title="Monitoring" icon="chart-line">
+    Monitor and audit all MCP endpoint access
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="MCP Overview" icon="robot" href="/api/mcp-overview">
+    Learn about MCP integration features and setup
+  </Card>
+  <Card title="Log Viewer Security" icon="shield-halved" href="/security/log-viewer-security">
+    Comprehensive security measures for MCP endpoints
+  </Card>
+  <Card title="Log Viewer" icon="chart-simple" href="/features/log-viewer">
+    Web-based log viewer features and usage
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Server configuration and environment variables
+  </Card>
+</CardGroup>

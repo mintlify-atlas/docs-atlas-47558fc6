@@ -1,0 +1,489 @@
+---
+title: "Systemd Service"
+description: "Deploy GitHub Webhook Server as a systemd service"
+---
+
+## Overview
+
+Run the GitHub Webhook Server as a systemd service for automatic startup, restart on failure, and easy management.
+
+## Systemd Service Unit File
+
+Here's the systemd service configuration from the README:
+
+```ini
+[Unit]
+Description=GitHub Webhook Server
+After=network.target
+
+[Service]
+Type=simple
+User=webhook
+Group=webhook
+WorkingDirectory=/opt/github-webhook-server
+Environment=WEBHOOK_SERVER_DATA_DIR=/opt/github-webhook-server/data
+ExecStart=/usr/local/bin/uv run entrypoint.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## Installation Steps
+
+### 1. Create Service User
+
+Create a dedicated user for running the webhook server:
+
+```bash
+# Create webhook user
+sudo useradd -r -s /bin/bash -d /opt/github-webhook-server webhook
+
+# Create home directory
+sudo mkdir -p /opt/github-webhook-server
+sudo chown webhook:webhook /opt/github-webhook-server
+```
+
+### 2. Install Dependencies
+
+```bash
+# Install Python 3.12+
+sudo dnf install python3.12 python3.12-devel  # Fedora/RHEL
+# OR
+sudo apt install python3.12 python3.12-dev    # Ubuntu/Debian
+
+# Install uv package manager
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install git and other dependencies
+sudo dnf install git podman  # Fedora/RHEL
+# OR
+sudo apt install git podman  # Ubuntu/Debian
+```
+
+### 3. Install Webhook Server
+
+```bash
+# Switch to webhook user
+sudo su - webhook
+
+# Clone repository
+cd /opt/github-webhook-server
+git clone https://github.com/myakove/github-webhook-server.git .
+
+# Install dependencies
+uv sync
+
+# Create data directory
+mkdir -p data/logs
+```
+
+### 4. Configure the Server
+
+Create the configuration file:
+
+```bash
+# Create config.yaml
+cat > /opt/github-webhook-server/data/config.yaml << 'EOF'
+# yaml-language-server: $schema=https://raw.githubusercontent.com/myk-org/github-webhook-server/refs/heads/main/webhook_server/config/schema.yaml
+
+log-level: INFO
+log-file: webhook-server.log
+
+github-app-id: 123456
+webhook-ip: https://your-domain.com/webhook_server
+
+github-tokens:
+  - ghp_your_github_token
+
+repositories:
+  my-repository:
+    name: my-org/my-repository
+    protected-branches:
+      main: []
+EOF
+
+# Add GitHub App private key
+cp /path/to/webhook-server.private-key.pem /opt/github-webhook-server/data/
+
+# Set permissions
+chmod 600 /opt/github-webhook-server/data/config.yaml
+chmod 600 /opt/github-webhook-server/data/webhook-server.private-key.pem
+```
+
+### 5. Create Systemd Service
+
+```bash
+# Create service file
+sudo cat > /etc/systemd/system/github-webhook-server.service << 'EOF'
+[Unit]
+Description=GitHub Webhook Server
+After=network.target
+
+[Service]
+Type=simple
+User=webhook
+Group=webhook
+WorkingDirectory=/opt/github-webhook-server
+Environment="WEBHOOK_SERVER_DATA_DIR=/opt/github-webhook-server/data"
+Environment="WEBHOOK_SERVER_PORT=5000"
+Environment="MAX_WORKERS=20"
+Environment="VERIFY_GITHUB_IPS=1"
+Environment="ENABLE_LOG_SERVER=true"
+ExecStart=/home/webhook/.local/bin/uv run entrypoint.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/github-webhook-server/data
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Reload systemd
+sudo systemctl daemon-reload
+```
+
+<Note>
+Adjust the `ExecStart` path to match where `uv` is installed. Use `which uv` to find the correct path.
+</Note>
+
+## Environment Variables
+
+You can set environment variables in the service file:
+
+```ini
+[Service]
+Environment="WEBHOOK_SERVER_DATA_DIR=/opt/github-webhook-server/data"
+Environment="WEBHOOK_SERVER_PORT=5000"
+Environment="MAX_WORKERS=20"
+Environment="WEBHOOK_SECRET=your-secret-here"
+Environment="VERIFY_GITHUB_IPS=1"
+Environment="VERIFY_CLOUDFLARE_IPS=1"
+Environment="ENABLE_LOG_SERVER=true"
+Environment="ENABLE_MCP_SERVER=false"
+```
+
+### Using Environment File
+
+For better secret management, use an environment file:
+
+```bash
+# Create environment file
+sudo cat > /etc/github-webhook-server/environment << 'EOF'
+WEBHOOK_SERVER_DATA_DIR=/opt/github-webhook-server/data
+WEBHOOK_SERVER_PORT=5000
+MAX_WORKERS=20
+WEBHOOK_SECRET=your-secret-here
+VERIFY_GITHUB_IPS=1
+ENABLE_LOG_SERVER=true
+EOF
+
+# Set permissions
+sudo chmod 600 /etc/github-webhook-server/environment
+sudo chown webhook:webhook /etc/github-webhook-server/environment
+```
+
+Update the service file:
+
+```ini
+[Service]
+EnvironmentFile=/etc/github-webhook-server/environment
+```
+
+## Service Management
+
+### Enable and Start Service
+
+```bash
+# Enable service to start on boot
+sudo systemctl enable github-webhook-server
+
+# Start service
+sudo systemctl start github-webhook-server
+
+# Check status
+sudo systemctl status github-webhook-server
+```
+
+### Stop and Restart
+
+```bash
+# Stop service
+sudo systemctl stop github-webhook-server
+
+# Restart service
+sudo systemctl restart github-webhook-server
+
+# Reload configuration
+sudo systemctl reload-or-restart github-webhook-server
+```
+
+### Disable Service
+
+```bash
+# Disable service from starting on boot
+sudo systemctl disable github-webhook-server
+
+# Stop and disable
+sudo systemctl disable --now github-webhook-server
+```
+
+## Logs and Monitoring
+
+### View Logs with journalctl
+
+```bash
+# View all logs
+sudo journalctl -u github-webhook-server
+
+# Follow logs in real-time
+sudo journalctl -u github-webhook-server -f
+
+# View logs since last boot
+sudo journalctl -u github-webhook-server -b
+
+# View logs from last hour
+sudo journalctl -u github-webhook-server --since "1 hour ago"
+
+# View only errors
+sudo journalctl -u github-webhook-server -p err
+```
+
+### Application Logs
+
+Application logs are written to the data directory:
+
+```bash
+# View webhook server logs
+tail -f /opt/github-webhook-server/data/logs/webhook-server.log
+
+# View structured webhook logs
+tail -f /opt/github-webhook-server/data/logs/webhooks_*.json
+
+# View MCP server logs
+tail -f /opt/github-webhook-server/data/logs/mcp_server.log
+```
+
+### Health Check
+
+```bash
+# Check if service is running
+curl http://localhost:5000/webhook_server/healthcheck
+
+# Expected response:
+# {"status": 200, "message": "Alive"}
+```
+
+## Security Hardening
+
+### Service Isolation
+
+Add security restrictions to the service file:
+
+```ini
+[Service]
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/github-webhook-server/data
+ReadOnlyPaths=/opt/github-webhook-server
+
+# Network restrictions (if not using container building)
+# PrivateNetwork=true  # Uncomment if no network needed
+
+# Capabilities (minimal required)
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# System calls filter
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+```
+
+<Warning>
+If you need container building features, do NOT enable `PrivateNetwork` or restrict system calls too much.
+</Warning>
+
+### File Permissions
+
+```bash
+# Secure configuration files
+sudo chmod 600 /opt/github-webhook-server/data/config.yaml
+sudo chmod 600 /opt/github-webhook-server/data/webhook-server.private-key.pem
+sudo chown webhook:webhook /opt/github-webhook-server/data/*
+
+# Secure environment file
+sudo chmod 600 /etc/github-webhook-server/environment
+sudo chown webhook:webhook /etc/github-webhook-server/environment
+```
+
+### Firewall Configuration
+
+```bash
+# Allow webhook port (5000)
+sudo firewall-cmd --permanent --add-port=5000/tcp
+sudo firewall-cmd --reload
+
+# Or use firewalld service
+sudo firewall-cmd --permanent --add-service=http
+sudo firewall-cmd --reload
+```
+
+## Updates and Maintenance
+
+### Update Webhook Server
+
+```bash
+# Stop service
+sudo systemctl stop github-webhook-server
+
+# Switch to webhook user
+sudo su - webhook
+
+# Update code
+cd /opt/github-webhook-server
+git pull
+
+# Update dependencies
+uv sync
+
+# Exit webhook user
+exit
+
+# Start service
+sudo systemctl start github-webhook-server
+
+# Check status
+sudo systemctl status github-webhook-server
+```
+
+### Log Rotation
+
+Configure log rotation for application logs:
+
+```bash
+# Create logrotate configuration
+sudo cat > /etc/logrotate.d/github-webhook-server << 'EOF'
+/opt/github-webhook-server/data/logs/*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 webhook webhook
+    postrotate
+        systemctl reload github-webhook-server > /dev/null 2>&1 || true
+    endscript
+}
+EOF
+```
+
+## Troubleshooting
+
+### Service Won't Start
+
+```bash
+# Check service status
+sudo systemctl status github-webhook-server
+
+# View detailed error logs
+sudo journalctl -u github-webhook-server -n 100 --no-pager
+
+# Check if port is in use
+sudo ss -tlnp | grep 5000
+
+# Test manually
+sudo su - webhook
+cd /opt/github-webhook-server
+uv run entrypoint.py
+```
+
+### Permission Errors
+
+```bash
+# Fix data directory permissions
+sudo chown -R webhook:webhook /opt/github-webhook-server/data
+sudo chmod 755 /opt/github-webhook-server/data
+sudo chmod 755 /opt/github-webhook-server/data/logs
+
+# Fix configuration file permissions
+sudo chmod 600 /opt/github-webhook-server/data/config.yaml
+```
+
+### Service Crashes
+
+```bash
+# View crash logs
+sudo journalctl -u github-webhook-server -p err -n 50
+
+# Check core dumps (if enabled)
+sudo coredumpctl list
+sudo coredumpctl info <pid>
+
+# Increase restart delay if service is crash-looping
+sudo systemctl edit github-webhook-server
+
+# Add:
+[Service]
+RestartSec=30
+```
+
+## Monitoring with systemd
+
+### Service Watchdog
+
+Enable systemd watchdog for automatic restart on hang:
+
+```ini
+[Service]
+WatchdogSec=60
+```
+
+### Resource Limits
+
+Set resource limits to prevent resource exhaustion:
+
+```ini
+[Service]
+# Memory limit (2GB)
+MemoryMax=2G
+MemoryHigh=1.5G
+
+# CPU limit (2 cores)
+CPUQuota=200%
+
+# File descriptor limit
+LimitNOFILE=65536
+
+# Process limit
+TasksMax=1024
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Configure your webhook server
+  </Card>
+  <Card title="Docker" icon="docker" href="/deployment/docker">
+    Docker deployment alternative
+  </Card>
+  <Card title="Examples" icon="code" href="/deployment/examples">
+    View deployment examples
+  </Card>
+  <Card title="Security" icon="shield" href="/security/overview">
+    Security best practices
+  </Card>
+</CardGroup>

