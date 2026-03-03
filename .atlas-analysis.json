@@ -1,0 +1,125 @@
+{
+  "projectType": "api-service",
+  "projectName": "GitHub Webhook Server",
+  "projectDescription": "FastAPI-based webhook server for automating GitHub repository management and pull request workflows",
+  "theme": "aspen",
+  "primaryColor": "#009688",
+  "lightColor": "#4DB6AC",
+  "darkColor": "#00796B",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation",
+              "configuration"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/webhook-events",
+              "concepts/owners-files",
+              "concepts/configuration-validation"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/pull-request-automation",
+              "features/ci-cd-integration",
+              "features/user-commands",
+              "features/log-viewer",
+              "features/ai-integration"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/docker",
+              "deployment/kubernetes",
+              "deployment/systemd",
+              "deployment/examples"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/overview",
+              "security/webhook-verification",
+              "security/log-viewer-security"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/monitoring",
+              "advanced/troubleshooting",
+              "advanced/contributing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Webhook Endpoints",
+            "pages": [
+              "api/webhook-endpoint",
+              "api/health-check"
+            ]
+          },
+          {
+            "group": "Log Viewer API",
+            "pages": [
+              "api/log-entries",
+              "api/log-export",
+              "api/pr-flow",
+              "api/websocket"
+            ]
+          },
+          {
+            "group": "MCP Integration",
+            "pages": [
+              "api/mcp-overview",
+              "api/mcp-endpoints"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Automated pull request workflow management with intelligent reviewer assignment",
+    "Real-time log viewer with WebSocket streaming and memory-optimized architecture",
+    "AI-powered test recommendations via pr-test-oracle integration",
+    "Multi-repository support with centralized YAML configuration",
+    "Container building and PyPI publishing automation",
+    "OWNERS-based code review system with fine-grained access control",
+    "Model Context Protocol (MCP) integration for AI agent interactions",
+    "Cherry-pick automation across multiple branches"
+  ],
+  "publicApiSurface": [
+    "POST /webhook_server - GitHub webhook processing endpoint",
+    "GET /webhook_server/healthcheck - Server health status",
+    "GET /logs - Web-based log viewer interface",
+    "GET /logs/api/entries - Historical log data with filtering",
+    "GET /logs/api/export - Log export functionality",
+    "GET /logs/api/pr-flow/{identifier} - PR workflow visualization",
+    "WS /logs/ws - Real-time log streaming via WebSocket",
+    "GET /mcp/* - Model Context Protocol endpoints for AI agents",
+    "/verified - Mark PR as verified (comment command)",
+    "/hold - Block PR merging (comment command)",
+    "/lgtm - Approve PR changes (comment command)",
+    "/cherry-pick <branch> - Cherry-pick PR to branch (comment command)",
+    "/retest <test-name> - Trigger specific tests (comment command)",
+    "/test-oracle - Request AI test recommendations (comment command)"
+  ]
+}
