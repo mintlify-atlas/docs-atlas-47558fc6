@@ -1,0 +1,236 @@
+---
+title: 'Workflow Steps'
+description: 'Retrieve detailed timeline and execution data for workflow steps'
+icon: 'timeline'
+---
+
+<Warning>
+**Security Warning**: This endpoint is unauthenticated and exposes potentially sensitive webhook processing data. Only deploy on trusted networks (VPN, internal network). See [Log Viewer Security](/security/log-viewer-security) for deployment guidance.
+</Warning>
+
+## Endpoint
+
+```
+GET /logs/api/workflow-steps/{hook_id}
+```
+
+Retrieve detailed timeline and execution data for individual workflow steps within a webhook processing flow. This endpoint provides granular, step-by-step analysis of webhook processing workflows with detailed timing, execution status, and diagnostic information.
+
+## Parameters
+
+<ParamField path="hook_id" type="string" required>
+  GitHub webhook delivery ID (X-GitHub-Delivery header value)
+  
+  Example: `f4b3c2d1-a9b8-4c5d-9e8f-1a2b3c4d5e6f`
+</ParamField>
+
+## Response
+
+<ResponseField name="hook_id" type="string">
+  The webhook delivery ID requested
+</ResponseField>
+
+<ResponseField name="workflow_metadata" type="object">
+  <Expandable title="properties">
+    <ResponseField name="repository" type="string">
+      Repository name (org/repo format)
+    </ResponseField>
+    <ResponseField name="event_type" type="string">
+      GitHub event type (pull_request, push, etc.)
+    </ResponseField>
+    <ResponseField name="initiated_at" type="string">
+      Workflow start timestamp (ISO 8601)
+    </ResponseField>
+    <ResponseField name="total_duration_ms" type="number">
+      Total workflow duration in milliseconds
+    </ResponseField>
+    <ResponseField name="total_steps" type="number">
+      Total number of workflow steps
+    </ResponseField>
+    <ResponseField name="steps_completed" type="number">
+      Number of successfully completed steps
+    </ResponseField>
+    <ResponseField name="steps_failed" type="number">
+      Number of failed steps
+    </ResponseField>
+    <ResponseField name="steps_skipped" type="number">
+      Number of skipped steps
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="execution_timeline" type="array">
+  Array of workflow step executions in chronological order
+  
+  <Expandable title="step properties">
+    <ResponseField name="step_id" type="string">
+      Unique step identifier
+    </ResponseField>
+    <ResponseField name="step_name" type="string">
+      Human-readable step name
+    </ResponseField>
+    <ResponseField name="sequence" type="number">
+      Step execution order
+    </ResponseField>
+    <ResponseField name="started_at" type="string">
+      Step start timestamp (ISO 8601)
+    </ResponseField>
+    <ResponseField name="completed_at" type="string">
+      Step completion timestamp (ISO 8601)
+    </ResponseField>
+    <ResponseField name="duration_ms" type="number">
+      Step duration in milliseconds
+    </ResponseField>
+    <ResponseField name="status" type="string">
+      Execution status: `completed`, `failed`, or `skipped`
+    </ResponseField>
+    <ResponseField name="operation_type" type="string">
+      Type of operation: `security`, `data_processing`, `api_call`, etc.
+    </ResponseField>
+    <ResponseField name="details" type="object">
+      Step-specific execution details and metadata
+    </ResponseField>
+    <ResponseField name="error" type="object" optional>
+      Error information if step failed
+      <Expandable title="error properties">
+        <ResponseField name="type" type="string">
+          Error type/exception name
+        </ResponseField>
+        <ResponseField name="message" type="string">
+          Error message
+        </ResponseField>
+        <ResponseField name="traceback" type="string">
+          Full error traceback
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Use Cases
+
+1. **Debug specific workflow step failures** - Detailed error information for failed steps
+2. **Analyze step-by-step performance** - Identify slow operations and bottlenecks
+3. **Monitor operation success rates** - Track failure patterns across workflows
+4. **Generate audit trails** - Compliance and monitoring with detailed execution logs
+5. **Identify resource bottlenecks** - Find operations consuming excessive resources
+6. **Track GitHub API usage** - Monitor API rate limiting per workflow step
+7. **Investigate integration issues** - Debug external service integration problems
+
+## Examples
+
+### Basic Request
+
+```bash
+curl "http://localhost:5000/logs/api/workflow-steps/f4b3c2d1-a9b8-4c5d-9e8f-1a2b3c4d5e6f"
+```
+
+### Response Example
+
+```json
+{
+  "hook_id": "f4b3c2d1-a9b8-4c5d-9e8f-1a2b3c4d5e6f",
+  "workflow_metadata": {
+    "repository": "myk-org/github-webhook-server",
+    "event_type": "pull_request",
+    "initiated_at": "2024-01-15T10:00:00.123456Z",
+    "total_duration_ms": 45230,
+    "total_steps": 12,
+    "steps_completed": 10,
+    "steps_failed": 1,
+    "steps_skipped": 1
+  },
+  "execution_timeline": [
+    {
+      "step_id": "webhook_validation",
+      "step_name": "Webhook Signature Validation",
+      "sequence": 1,
+      "started_at": "2024-01-15T10:00:00.123456Z",
+      "completed_at": "2024-01-15T10:00:00.156789Z",
+      "duration_ms": 33,
+      "status": "completed",
+      "operation_type": "security",
+      "details": {
+        "signature_valid": true,
+        "payload_size_bytes": 2048,
+        "validation_method": "sha256"
+      }
+    },
+    {
+      "step_id": "clone_repository",
+      "step_name": "Clone Repository",
+      "sequence": 3,
+      "started_at": "2024-01-15T10:00:01.234567Z",
+      "completed_at": "2024-01-15T10:00:15.678901Z",
+      "duration_ms": 14444,
+      "status": "completed",
+      "operation_type": "git_operation",
+      "details": {
+        "repository": "myk-org/github-webhook-server",
+        "branch": "main",
+        "commit_sha": "abc123def456",
+        "size_mb": 15.2
+      }
+    }
+  ]
+}
+```
+
+### Failed Step Example
+
+```json
+{
+  "step_id": "assign_reviewers",
+  "step_name": "Assign PR Reviewers",
+  "sequence": 8,
+  "started_at": "2024-01-15T10:00:20.123456Z",
+  "completed_at": "2024-01-15T10:00:20.234567Z",
+  "duration_ms": 111,
+  "status": "failed",
+  "operation_type": "github_api",
+  "error": {
+    "type": "GitHubException",
+    "message": "API rate limit exceeded",
+    "traceback": "Traceback (most recent call last):\n  File \"...\""
+  }
+}
+```
+
+## Error Responses
+
+<ResponseField name="404" type="object">
+  Hook ID not found in logs
+  
+  ```json
+  {
+    "detail": "Workflow steps not found for hook_id: f4b3c2d1..."
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="500" type="object">
+  Internal server error
+  
+  ```json
+  {
+    "detail": "Error retrieving workflow steps: <error message>"
+  }
+  ```
+</ResponseField>
+
+## Related Endpoints
+
+<CardGroup cols={2}>
+  <Card title="PR Flow" icon="diagram-project" href="/api/pr-flow">
+    High-level PR workflow visualization
+  </Card>
+  <Card title="Step Logs" icon="file-lines" href="/api/step-logs">
+    View logs for a specific workflow step
+  </Card>
+  <Card title="Log Entries" icon="list" href="/api/log-entries">
+    Query historical webhook logs
+  </Card>
+  <Card title="MCP Endpoints" icon="robot" href="/api/mcp-endpoints">
+    AI agent access to this endpoint
+  </Card>
+</CardGroup>

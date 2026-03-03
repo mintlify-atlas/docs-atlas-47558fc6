@@ -1,0 +1,290 @@
+---
+title: 'Step Logs'
+description: 'Retrieve log entries for a specific workflow step'
+icon: 'file-lines'
+---
+
+<Warning>
+**Security Warning**: This endpoint requires trusted network access and exposes sensitive webhook processing data including tokens and system information. Deploy only on private networks (VPN, internal). See [Log Viewer Security](/security/log-viewer-security).
+</Warning>
+
+## Endpoint
+
+```
+GET /logs/api/step-logs/{hook_id}/{step_name}
+```
+
+Retrieve log entries that occurred during a specific workflow step's execution window. This endpoint provides time-based correlation of log entries with workflow steps, allowing detailed analysis of what happened during each operation.
+
+## Parameters
+
+<ParamField path="hook_id" type="string" required>
+  GitHub webhook delivery ID (X-GitHub-Delivery header value)
+  
+  Example: `f4b3c2d1-a9b8-4c5d-9e8f-1a2b3c4d5e6f`
+  
+  Must be between 1 and 100 characters
+</ParamField>
+
+<ParamField path="step_name" type="string" required>
+  Name of the workflow step to retrieve logs for
+  
+  Examples:
+  - `clone_repository`
+  - `webhook_routing`
+  - `assign_reviewers`
+  - `run_tox_tests`
+  
+  Must be between 1 and 100 characters
+</ParamField>
+
+## Response
+
+<ResponseField name="step" type="object">
+  Metadata about the workflow step
+  
+  <Expandable title="properties">
+    <ResponseField name="name" type="string">
+      Step name
+    </ResponseField>
+    <ResponseField name="status" type="string">
+      Execution status: `completed`, `failed`, or `in_progress`
+    </ResponseField>
+    <ResponseField name="timestamp" type="string">
+      Step start timestamp (ISO 8601)
+    </ResponseField>
+    <ResponseField name="duration_ms" type="number" optional>
+      Step duration in milliseconds (if completed)
+    </ResponseField>
+    <ResponseField name="error" type="object" optional>
+      Error information if step failed
+      <Expandable title="error properties">
+        <ResponseField name="message" type="string">
+          Error message
+        </ResponseField>
+        <ResponseField name="type" type="string">
+          Error type/exception name
+        </ResponseField>
+        <ResponseField name="traceback" type="string">
+          Full error traceback
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="logs" type="array">
+  Array of log entries that occurred during step execution
+  
+  <Expandable title="log entry properties">
+    <ResponseField name="timestamp" type="string">
+      Log entry timestamp (ISO 8601)
+    </ResponseField>
+    <ResponseField name="level" type="string">
+      Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR`
+    </ResponseField>
+    <ResponseField name="logger_name" type="string">
+      Logger name (e.g., `GithubWebhook`, `PullRequestHandler`)
+    </ResponseField>
+    <ResponseField name="message" type="string">
+      Log message
+    </ResponseField>
+    <ResponseField name="hook_id" type="string">
+      Webhook delivery ID
+    </ResponseField>
+    <ResponseField name="event_type" type="string" optional>
+      GitHub event type
+    </ResponseField>
+    <ResponseField name="repository" type="string" optional>
+      Repository name
+    </ResponseField>
+    <ResponseField name="pr_number" type="number" optional>
+      Pull request number
+    </ResponseField>
+    <ResponseField name="github_user" type="string" optional>
+      GitHub username
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="log_count" type="number">
+  Total number of log entries found for the step
+</ResponseField>
+
+## Use Cases
+
+1. **Debug step failures** - See exactly what happened during a failed operation
+2. **Performance analysis** - Identify slow operations within a step
+3. **Audit trail** - Track all actions taken during a specific operation
+4. **Error investigation** - View full error context and stack traces
+5. **API debugging** - See GitHub API calls and responses for a step
+6. **Configuration verification** - Check what configuration was used
+
+## Examples
+
+### Basic Request
+
+```bash
+curl "http://localhost:5000/logs/api/step-logs/f4b3c2d1-a9b8-4c5d-9e8f-1a2b3c4d5e6f/clone_repository"
+```
+
+### Successful Step Response
+
+```json
+{
+  "step": {
+    "name": "clone_repository",
+    "status": "completed",
+    "timestamp": "2024-01-15T10:00:05.123456Z",
+    "duration_ms": 14444
+  },
+  "logs": [
+    {
+      "timestamp": "2024-01-15T10:00:05.123456Z",
+      "level": "INFO",
+      "logger_name": "GithubWebhook",
+      "message": "Starting repository clone for myk-org/github-webhook-server",
+      "hook_id": "f4b3c2d1-a9b8-4c5d-9e8f-1a2b3c4d5e6f",
+      "event_type": "pull_request",
+      "repository": "myk-org/github-webhook-server"
+    },
+    {
+      "timestamp": "2024-01-15T10:00:05.234567Z",
+      "level": "DEBUG",
+      "logger_name": "GithubWebhook",
+      "message": "Cloning branch: main, commit: abc123def456",
+      "hook_id": "f4b3c2d1-a9b8-4c5d-9e8f-1a2b3c4d5e6f",
+      "repository": "myk-org/github-webhook-server"
+    },
+    {
+      "timestamp": "2024-01-15T10:00:19.567890Z",
+      "level": "INFO",
+      "logger_name": "GithubWebhook",
+      "message": "Repository cloned successfully (15.2 MB)",
+      "hook_id": "f4b3c2d1-a9b8-4c5d-9e8f-1a2b3c4d5e6f",
+      "repository": "myk-org/github-webhook-server"
+    }
+  ],
+  "log_count": 3
+}
+```
+
+### Failed Step Response
+
+```json
+{
+  "step": {
+    "name": "assign_reviewers",
+    "status": "failed",
+    "timestamp": "2024-01-15T10:00:20.123456Z",
+    "duration_ms": 111,
+    "error": {
+      "message": "API rate limit exceeded",
+      "type": "GitHubException",
+      "traceback": "Traceback (most recent call last):\n  File \"webhook_server/libs/handlers/owners_files_handler.py\", line 442..."
+    }
+  },
+  "logs": [
+    {
+      "timestamp": "2024-01-15T10:00:20.123456Z",
+      "level": "INFO",
+      "logger_name": "OwnersFileHandler",
+      "message": "Assigning reviewers based on OWNERS file",
+      "hook_id": "f4b3c2d1-a9b8-4c5d-9e8f-1a2b3c4d5e6f",
+      "pr_number": 123
+    },
+    {
+      "timestamp": "2024-01-15T10:00:20.234567Z",
+      "level": "ERROR",
+      "logger_name": "OwnersFileHandler",
+      "message": "Failed to assign reviewers: API rate limit exceeded",
+      "hook_id": "f4b3c2d1-a9b8-4c5d-9e8f-1a2b3c4d5e6f",
+      "pr_number": 123
+    }
+  ],
+  "log_count": 2
+}
+```
+
+## Error Responses
+
+<ResponseField name="404" type="object">
+  Hook ID not found in logs
+  
+  ```json
+  {
+    "detail": "Hook ID not found: f4b3c2d1..."
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="404" type="object">
+  Step name not found for the given hook ID
+  
+  ```json
+  {
+    "detail": "Step 'invalid_step' not found for hook_id: f4b3c2d1..."
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="500" type="object">
+  Internal server error
+  
+  ```json
+  {
+    "detail": "Error retrieving step logs: <error message>"
+  }
+  ```
+</ResponseField>
+
+## Common Step Names
+
+The following step names are commonly used in webhook processing workflows:
+
+| Step Name | Description |
+|-----------|-------------|
+| `webhook_validation` | Webhook signature and payload validation |
+| `payload_parsing` | JSON payload parsing and field extraction |
+| `webhook_routing` | Routing webhook to appropriate handler |
+| `clone_repository` | Clone repository from GitHub |
+| `assign_reviewers` | Assign OWNERS-based reviewers to PR |
+| `update_labels` | Update PR labels (size, status, branch) |
+| `run_tox_tests` | Execute tox test suite |
+| `build_container` | Build and push container image |
+| `publish_pypi` | Publish package to PyPI |
+| `check_can_merge` | Validate PR merge readiness |
+| `create_tracking_issue` | Create PR tracking issue |
+| `cleanup` | Cleanup temporary files and resources |
+
+<Tip>
+Use the [Workflow Steps](/api/workflow-steps) endpoint to get a complete list of all steps for a specific webhook delivery.
+</Tip>
+
+## Security Considerations
+
+This endpoint is restricted to trusted networks only and includes an additional `require_trusted_network` dependency check. It will reject requests from public IP addresses.
+
+**Allowed network ranges:**
+- Private networks (RFC 1918): 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+- Loopback addresses: 127.0.0.0/8
+- Link-local addresses: 169.254.0.0/16
+
+For production deployments, always use a VPN or deploy behind a reverse proxy with authentication.
+
+## Related Endpoints
+
+<CardGroup cols={2}>
+  <Card title="Workflow Steps" icon="timeline" href="/api/workflow-steps">
+    View all workflow steps and execution timeline
+  </Card>
+  <Card title="PR Flow" icon="diagram-project" href="/api/pr-flow">
+    High-level PR workflow visualization
+  </Card>
+  <Card title="Log Entries" icon="list" href="/api/log-entries">
+    Query historical webhook logs
+  </Card>
+  <Card title="Security Guide" icon="shield" href="/security/log-viewer-security">
+    Log viewer security best practices
+  </Card>
+</CardGroup>

@@ -94,6 +94,8 @@
               "api/log-entries",
               "api/log-export",
               "api/pr-flow",
+              "api/workflow-steps",
+              "api/step-logs",
               "api/websocket"
             ]
           },
